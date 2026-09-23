@@ -3,6 +3,42 @@ import {
   resolveSwappableAssets,
   isAssetSwappable,
 } from '../services/swappable-assets';
+import { buildPathPaymentOperation } from '../services/path-payment';
+
+describe('buildPathPaymentOperation', () => {
+  it('uses the configured issuer for a non-native asset code', () => {
+    const op = buildPathPaymentOperation({
+      sourceAsset: 'USDC',
+      sourceAmount: '10',
+      destinationAsset: 'XLM',
+      destinationAmount: '2',
+      destinationAccount: 'GCGCJQAE6H7A6V5C7Q3V4L66JZ7R5XJCV2K5W6KQ7',
+      sourceAccountSequence: 1,
+    });
+
+    expect(op.type).toBe('pathPaymentStrictReceive');
+    expect(op.sendAsset.code).toBe('USDC');
+    expect(op.sendAsset.issuer).toBe(
+      'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    );
+    expect(op.destAsset.isNative()).toBe(true);
+  });
+
+  it('accepts code:issuer strings without forcing the same issuer onto every asset', () => {
+    const issuer = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
+    const op = buildPathPaymentOperation({
+      sourceAsset: `AQUA:${issuer}`,
+      sourceAmount: '10',
+      destinationAsset: 'XLM',
+      destinationAmount: '2',
+      destinationAccount: 'GCGCJQAE6H7A6V5C7Q3V4L66JZ7R5XJCV2K5W6KQ7',
+      sourceAccountSequence: 1,
+    });
+
+    expect(op.sendAsset.code).toBe('AQUA');
+    expect(op.sendAsset.issuer).toBe(issuer);
+  });
+});
 
 describe('resolveSwappableAssets', () => {
   let warnSpy: jest.SpyInstance;

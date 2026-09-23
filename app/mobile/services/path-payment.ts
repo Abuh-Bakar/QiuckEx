@@ -6,8 +6,43 @@ import {
   Asset,
   BASE_FEE,
   Account,
-} from 'stellar-sdk';
-import type { PathPreviewRow } from './link-metadata';
+} from "stellar-sdk";
+import type { PathPreviewRow } from "./link-metadata";
+
+const KNOWN_ASSET_ISSUERS: Record<string, string> = {
+  USDC: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  AQUA: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+  yXLM: "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55",
+};
+
+function resolveAsset(asset: string): Asset {
+  const trimmed = asset.trim();
+
+  if (!trimmed || trimmed.toUpperCase() === "XLM") {
+    return Asset.native();
+  }
+
+  const [code, ...issuerParts] = trimmed.split(":");
+  const normalizedCode = code.trim().toUpperCase();
+  const issuer = issuerParts.join(":").trim();
+
+  if (!normalizedCode) {
+    throw new Error(`Invalid asset selector: "${asset}"`);
+  }
+
+  if (issuer) {
+    return new Asset(normalizedCode, issuer);
+  }
+
+  const knownIssuer = KNOWN_ASSET_ISSUERS[normalizedCode];
+  if (!knownIssuer) {
+    throw new Error(
+      `Unsupported non-native asset: "${asset}". Use a code like XLM or USDC:ISSUER.`,
+    );
+  }
+
+  return new Asset(normalizedCode, knownIssuer);
+}
 
 export interface PathPaymentOptions {
   sourceAsset: string;
@@ -18,7 +53,7 @@ export interface PathPaymentOptions {
   sourceAccountSequence: number;
   memo?: string;
   memoType?: string;
-  network?: 'public' | 'testnet';
+  network?: "public" | "testnet";
 }
 
 export interface PathPaymentRoute {
@@ -41,14 +76,8 @@ export function buildPathPaymentOperation(
     destinationAccount,
   } = options;
 
-  // Create Asset objects for source and destination
-  const srcAsset = sourceAsset === 'XLM'
-    ? Asset.native()
-    : new Asset(sourceAsset, 'GBUQWP3BOUZX34ULNQG23RQ6F4YUSXHTWYV2KY2H5YMWUT6YFPQQSTVY'); // TODO: Get correct issuer from whitelist
-
-  const dstAsset = destinationAsset === 'XLM'
-    ? Asset.native()
-    : new Asset(destinationAsset, 'GBUQWP3BOUZX34ULNQG23RQ6F4YUSXHTWYV2KY2H5YMWUT6YFPQQSTVY'); // TODO: Get correct issuer from whitelist
+  const srcAsset = resolveAsset(sourceAsset);
+  const dstAsset = resolveAsset(destinationAsset);
 
   return Operation.pathPaymentStrictReceive({
     destination: destinationAccount,
@@ -78,11 +107,11 @@ export function buildPathPaymentTransaction(
   const keypair = Keypair.fromSecret(secretKey);
 
   if (keypair.publicKey() !== userAccount.accountId) {
-    throw new Error('Secret key does not match user account');
+    throw new Error("Secret key does not match user account");
   }
 
   const networkPassphrase =
-    options.network === 'public' ? Networks.PUBLIC : Networks.TESTNET;
+    options.network === "public" ? Networks.PUBLIC : Networks.TESTNET;
 
   const transaction = new TransactionBuilder(
     new Account(userAccount.accountId, String(userAccount.sequenceNumber)),
@@ -96,7 +125,7 @@ export function buildPathPaymentTransaction(
     .build();
 
   transaction.sign(keypair);
-  return transaction.toEnvelope().toXDR('base64');
+  return transaction.toEnvelope().toXDR("base64");
 }
 
 /**
@@ -105,9 +134,9 @@ export function buildPathPaymentTransaction(
  */
 export function formatSwapPathDisplay(path: string[]): string {
   if (path.length === 0) {
-    return 'Direct';
+    return "Direct";
   }
-  return path.join(' → ');
+  return path.join(" → ");
 }
 
 /**
@@ -119,6 +148,11 @@ export function calculateExchangeRate(
 ): number {
   const src = parseFloat(sourceAmount);
   const dst = parseFloat(destinationAmount);
+
+  if (!Number.isFinite(src) || !Number.isFinite(dst) || src === 0) {
+    return 0;
+  }
+
   return dst / src;
 }
 
@@ -137,7 +171,10 @@ export function calculateSlippage(
 
   const src = parseFloat(sourceAmount);
   const dst = parseFloat(destinationAmount);
-  const rate = dst / src;
+
+  if (!Number.isFinite(src) || !Number.isFinite(dst) || src === 0) {
+    return 0;
+  }
 
   // Estimate base slippage: 0.1% per hop (typical Stellar spread)
   const estimatedBaseSlippage = hopCount * 0.001;
