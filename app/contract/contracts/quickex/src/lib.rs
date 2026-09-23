@@ -42,6 +42,8 @@ mod hook;
 #[cfg(test)]
 mod hook_reentrancy_test;
 #[cfg(test)]
+mod hook_reference_test;
+#[cfg(test)]
 mod metadata_test;
 mod migration;
 pub mod nonce;
