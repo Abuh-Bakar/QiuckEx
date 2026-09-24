@@ -86,7 +86,7 @@ jobs:
             sleep 1
           done
 
-          cd ../e2e
+          cd ../../e2e
           npm install
           if [ "${{ inputs.update-baselines || 'false' }}" = "true" ]; then
             echo "Updating baseline goldens..."
