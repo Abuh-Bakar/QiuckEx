@@ -58,7 +58,7 @@ impl ReferenceHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::Env;
 
     #[test]
     fn stats_default_to_zero() {

@@ -1,9 +1,8 @@
 #![cfg(test)]
 #![allow(dead_code)]
 
-use crate::{test_context::TestContext, types::HookEventKind, QuickexContractClient};
-use reference_hook::{HookStats, ReferenceHook, ReferenceHookClient};
-use soroban_sdk::{testutils::Address as _, Address, Bytes, BytesN, Env, IntoVal};
+use crate::test_context::TestContext;
+use reference_hook::{ReferenceHook, ReferenceHookClient};
 
 #[test]
 fn test_reference_hook_success_and_failure_isolation() {
