@@ -988,6 +988,7 @@ name = "quickex"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "reference_hook",
  "serde",
  "serde_json",
  "soroban-sdk",

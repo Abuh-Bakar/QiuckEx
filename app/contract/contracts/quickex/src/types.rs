@@ -281,6 +281,31 @@ pub enum HookEventKind {
     Refund = 3,
 }
 
+/// Canonical hook invocation failure/skip reason codes (SC-W7-05).
+///
+/// Emitted on [`crate::events::HookInvocationFailedEvent`] and
+/// [`crate::events::HookInvocationSkippedEvent`]. Stable across releases —
+/// never renumber or remove an existing variant, only append new ones.
+/// Off-chain indexers and dashboards key on these numeric values, so a
+/// reorder would silently reclassify past events.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum HookFailureReason {
+    /// The hook contract's `on_escrow_event` call aborted — it panicked,
+    /// trapped, or exceeded a resource limit. Corresponds to
+    /// `InvokeError::Abort` (or an `InvokeError::Contract` code that never
+    /// reached a decodable contract error) from `try_invoke_contract`.
+    InvocationAborted = 1,
+    /// The hook contract ran to completion but returned an explicit
+    /// contract error instead of succeeding.
+    ContractError = 2,
+    /// The hook was not invoked at all because `invoke_hooks` was entered
+    /// while the reentrancy guard was already held. Every hook registered
+    /// for this event was skipped, not just one.
+    ReentrancyGuardActive = 3,
+}
+
 /// Privileged roles for contract governance and operations.
 #[contracttype]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
