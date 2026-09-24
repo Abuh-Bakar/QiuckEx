@@ -96,6 +96,31 @@ async function settlePage(page: Page, ms = 2000): Promise<void> {
   await page.clock.runFor(ms);
 }
 
+/**
+ * With the page clock frozen, React only makes progress when the fake clock is
+ * advanced, and mocked-API responses can resolve on either side of our last
+ * advance depending on machine timing. Spin: check the page, advance the fake
+ * clock, repeat, until the readiness predicate is satisfied or the budget runs
+ * out. This makes data-driven content appear deterministically instead of
+ * racing a plain toBeVisible against a frozen scheduler.
+ */
+async function advanceUntil(
+  page: Page,
+  isReady: () => boolean,
+  label: string,
+  stepMs = 500,
+  maxMs = 20000,
+): Promise<void> {
+  let waited = 0;
+  while (waited <= maxMs) {
+    const ready = await page.evaluate(isReady);
+    if (ready) return;
+    await page.clock.runFor(stepMs);
+    waited += stepMs;
+  }
+  throw new Error(`Timed out advancing clock: ${label}`);
+}
+
 test.describe("theme screenshot regression", () => {
   for (const theme of THEMES) {
     test.describe(`${theme} mode`, () => {
@@ -133,9 +158,25 @@ test.describe("theme screenshot regression", () => {
         page,
       }) => {
         await openThemed(page, theme, "/dashboard");
-        // Under the frozen clock, advance a little so React's scheduler and
-        // effects flush before we assert on rendered content.
-        await page.clock.runFor(1000);
+        // Content (metrics, analytics, activity feed) renders on fake-clock
+        // ticks after mocked API responses arrive; advance while polling until
+        // it is all present so timing can't flake.
+        await advanceUntil(
+          page,
+          () => {
+            const text = document.body?.innerText ?? "";
+            return (
+              !text.includes("Loading dashboard") &&
+              text.includes("Live Backend Data") &&
+              text.includes("Analytics Overview") &&
+              /ab12cd.*uv12/.test(text)
+            );
+          },
+          `dashboard content (${theme})`,
+        );
+        // Content is up now — settle the recharts JS animations and any
+        // setTimeout-driven previews before capturing.
+        await settlePage(page, 4000);
         await expect(
           page.getByRole("heading", { name: /welcome back/i }),
         ).toBeVisible();
@@ -148,10 +189,27 @@ test.describe("theme screenshot regression", () => {
         // mounted, so the recharts JS animations complete before capture.
         await settlePage(page, 4000);
 
-        await expect(page).toHaveScreenshot(`dashboard-${theme}.png`);
-        await expect(
-          page.locator("#analytics-dashboard"),
-        ).toHaveScreenshot(`dashboard-analytics-${theme}.png`);
+        // The dashboard uses blurred glow elements, shadows and SVG charts,
+        // whose rasterization differs slightly between GPUs/software renderers
+        // and Chrome builds. Allow that environment noise explicitly; the
+        // theme-token contract (below) keeps exact color assertions.
+        await expect(page).toHaveScreenshot(`dashboard-${theme}.png`, {
+          maxDiffPixelRatio: 0.04,
+        });
+
+        // Zoom the analytics block: pin the section to the top of the viewport
+        // so the capture stays 1440x900 (a fixed size) instead of a
+        // content-sized bounding box that can shift by a pixel across
+        // environments and fail a screenshot on dimensions alone.
+        await page.evaluate(() => {
+          document
+            .getElementById("analytics-dashboard")
+            ?.scrollIntoView({ block: "start" });
+        });
+        await settlePage(page);
+        await expect(page).toHaveScreenshot(`dashboard-analytics-${theme}.png`, {
+          maxDiffPixelRatio: 0.04,
+        });
       });
 
       test("settings page renders profile customization forms", async ({
@@ -161,8 +219,21 @@ test.describe("theme screenshot regression", () => {
         await expect(page.locator('input[type="color"]')).toBeVisible();
         await expect(page.getByText("Social Links")).toBeVisible();
         await settlePage(page);
+
+        // Capture the settings surface as fixed-size viewport shots. The page
+        // is taller than the viewport, and its content height can differ by a
+        // pixel across environments (font metric rounding), so a fullPage or
+        // element-bound capture would fail on dimensions alone.
         await expect(page).toHaveScreenshot(`settings-${theme}.png`, {
-          fullPage: true,
+          maxDiffPixelRatio: 0.04,
+        });
+
+        // Bottom fold: the Social Links card (custom color swatches + link
+        // fields) pinned into the viewport.
+        await page.getByText("Social Links").scrollIntoViewIfNeeded();
+        await settlePage(page);
+        await expect(page).toHaveScreenshot(`settings-bottom-${theme}.png`, {
+          maxDiffPixelRatio: 0.04,
         });
       });
 

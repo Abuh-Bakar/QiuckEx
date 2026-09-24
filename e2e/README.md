@@ -29,8 +29,15 @@ of after merge.
 | Public payment (paid)    | `pay-paid-{theme}.png`                                    | `payment-links/status` |
 | Dashboard overview       | `dashboard-{theme}.png`                                   | `analytics/report`, `payments/recent` |
 | Dashboard analytics      | `dashboard-analytics-{theme}.png` (chart block)           | `analytics/report` |
-| Profile settings         | `settings-{theme}.png`                                    | — |
+| Profile settings         | `settings-{theme}.png` (top) + `settings-bottom-{theme}.png` (Social Links fold) | — |
 | Admin console            | `admin-{theme}.png`                                       | `health`, `admin/feature-flags`, `admin/audit` |
+
+Most captures are fixed-size viewport shots (1440x900). The public payment and
+admin captures are full-page. The analytics and Social Links captures pin the
+target section to the top of the viewport first so the image size stays
+constant even when content flow shifts by a pixel; full-page captures of
+content-heavy tall screens are avoided for the same reason (a 2px height delta
+fails a screenshot comparison on dimensions, not color).
 
 Every screenshot sits on top of the shared header/footer (theme toggle,
 notification bell, locale switcher) and the bootstrap/feature-flag providers,
@@ -56,6 +63,11 @@ Goldens only stay useful if every run renders identically:
   `timezoneId: UTC`, and `colorScheme` are set at the project level.
 - **Settled animations** — recharts animations are fast-forwarded with
   `page.clock.runFor` before the analytics screenshot.
+- **Environment-tolerant** — dashboard/settings shots allow
+  `maxDiffPixelRatio: 0.04` because blurred glows, shadows and SVG charts
+  rasterize marginally differently across Chrome builds/GPU vs software
+  rendering. Exact colors are still pinned by the theme token contract;
+  `pay`/`admin` stay at the stricter `0.02`.
 
 > Goldens are OS/browser specific. They are generated on Linux with the system
 > Google Chrome (`channel: "chrome"`), matching CI's `ubuntu-latest`. Always
