@@ -53,13 +53,15 @@ export interface SeedDatabaseOptions extends CreateSeedFixturesOptions {
   tables?: SeedableTable[];
 }
 
-function tableRows(fixtures: SeedFixtures): Record<string, unknown[]> {
+function tableRows(
+  fixtures: SeedFixtures,
+): Record<SeedableTable, Record<string, unknown>[]> {
   return {
-    users: fixtures.users,
-    usernames: fixtures.usernames,
-    links: fixtures.links,
-    transactions: fixtures.transactions,
-    receipts: fixtures.receipts,
+    users: fixtures.users.map((row) => ({ ...row })),
+    usernames: fixtures.usernames.map((row) => ({ ...row })),
+    links: fixtures.links.map((row) => ({ ...row })),
+    transactions: fixtures.transactions.map((row) => ({ ...row })),
+    receipts: fixtures.receipts.map((row) => ({ ...row })),
   };
 }
 
