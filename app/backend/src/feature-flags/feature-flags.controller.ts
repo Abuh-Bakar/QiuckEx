@@ -7,6 +7,7 @@ import {
   Patch,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
@@ -19,6 +20,8 @@ import {
 } from './feature-flags.dto';
 import { FeatureFlagsService } from './feature-flags.service';
 import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
 
 @ApiTags('feature-flags')
 @Controller()
@@ -26,6 +29,8 @@ export class FeatureFlagsController {
   constructor(private readonly featureFlagsService: FeatureFlagsService) {}
 
   @Get('admin/feature-flags')
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes('admin')
   @RateLimitTier("public-read")
   @ApiOperation({ summary: 'List feature flags and flag store status' })
   async listFlags() {
@@ -33,6 +38,8 @@ export class FeatureFlagsController {
   }
 
   @Get('admin/feature-flags/:key')
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes('admin')
   @RateLimitTier("public-read")
   @ApiOperation({ summary: 'Get a single feature flag' })
   async getFlag(@Param('key') key: string) {
@@ -40,6 +47,8 @@ export class FeatureFlagsController {
   }
 
   @Patch('admin/feature-flags/:key')
+  @UseGuards(ApiKeyGuard)
+  @RequireScopes('admin')
   @RateLimitTier("mutation")
   @ApiOperation({ summary: 'Update a feature flag and audit the change' })
   @ApiResponse({ status: 200, description: 'Feature flag updated successfully' })
