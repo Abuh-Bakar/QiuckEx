@@ -9,6 +9,12 @@ import {
 } from './errors';
 import { createInMemorySeedStore } from '../testing/in-memory-seed.store';
 import { createTestIsolation } from '../testing/test-isolation.util';
+import {
+  type FeaturedProfileResult,
+  type SearchProfileResult,
+  type TrendingCreatorResult,
+  type UsernameRow,
+} from './usernames.repository';
 
 describe('UsernamesController', () => {
   let controller: UsernamesController;
@@ -109,7 +115,7 @@ describe('UsernamesController', () => {
     it('returns usernames for wallet from the seeded dataset', async () => {
       const rows = seed('usernames').filter(
         (u) => u.public_key === validPublicKey,
-      );
+      ) as unknown as UsernameRow[];
       usernamesService.listByPublicKey.mockResolvedValueOnce(rows);
       const result = await controller.listUsernames({ publicKey: validPublicKey });
       expect(result).toEqual({ usernames: rows });
@@ -119,7 +125,9 @@ describe('UsernamesController', () => {
 
   describe('getTrendingCreators', () => {
     it('maps ranked creators to the response shape and forwards pagination info', async () => {
-      const creators = seed('usernames').filter((u) => u.is_public === true);
+      const creators = seed('usernames').filter(
+        (u) => u.is_public === true,
+      ) as unknown as TrendingCreatorResult[];
       usernamesService.getTrendingCreators.mockResolvedValueOnce({
         data: creators,
         next_cursor: 'next-page-cursor',
@@ -148,7 +156,7 @@ describe('UsernamesController', () => {
 
   describe('getRecentlyActive', () => {
     it('maps recently active users to the response shape and forwards pagination info', async () => {
-      const users = seed('usernames');
+      const users = seed('usernames') as unknown as SearchProfileResult[];
       usernamesService.getRecentlyActiveUsers.mockResolvedValueOnce({
         data: users,
         next_cursor: null,
@@ -174,7 +182,9 @@ describe('UsernamesController', () => {
 
   describe('getFeaturedCreators', () => {
     it('maps featured creators to the response shape and forwards pagination info', async () => {
-      const creators = seed('usernames').filter((u) => u.featured_rank !== null);
+      const creators = seed('usernames').filter(
+        (u) => u.featured_rank !== null,
+      ) as unknown as FeaturedProfileResult[];
       usernamesService.getFeaturedCreators.mockResolvedValueOnce({
         data: creators,
         next_cursor: null,

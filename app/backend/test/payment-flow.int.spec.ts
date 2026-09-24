@@ -20,10 +20,13 @@ import { PaymentLinkService } from "../src/links/payment-link.service";
 import { HorizonService } from "../src/transactions/horizon.service";
 import {
   PAYMENT_LINKS_REPOSITORY,
+  type ExpiredPaymentLinkRow,
   type PaymentLinksRepository,
 } from "../src/links/payment-links.repository";
 import { LinksService } from "../src/links/links.service";
 import { LinkState } from "../src/links/link-state-machine";
+import { LinkMetadataResponseDto } from "../src/dto/link/link-metadata-response.dto";
+import { TransactionItemDto } from "../src/transactions/dto/transaction.dto";
 import { PaymentLinkExpiryService } from "../src/links/payment-link-expiry.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { AuditService } from "../src/audit/audit.service";
@@ -42,8 +45,8 @@ describe("Payment Flow Integration", () => {
   let store: ReturnType<typeof createInMemorySeedStore>;
 
   let DEST_PUBLIC_KEY: string;
-  let baseMetadata: Record<string, unknown>;
-  let paidPaymentItem: Record<string, unknown>;
+  let baseMetadata: LinkMetadataResponseDto;
+  let paidPaymentItem: TransactionItemDto;
 
   beforeEach(async () => {
     store = createInMemorySeedStore();
@@ -58,16 +61,16 @@ describe("Payment Flow Integration", () => {
     DEST_PUBLIC_KEY = String(aliceUsername.public_key);
 
     baseMetadata = {
-      amount: seedLink.amount,
-      asset: seedLink.asset_code,
-      username: seedLink.username,
-      memo: seedLink.memo,
+      amount: String(seedLink.amount),
+      asset: String(seedLink.asset_code),
+      username: String(seedLink.username),
+      memo: String(seedLink.memo),
       memoType: "text",
       privacy: false,
       expiresAt: new Date(Date.now() + 30 * 86400000),
-      acceptedAssets: [seedLink.asset_code],
+      acceptedAssets: [String(seedLink.asset_code)],
       swapOptions: null,
-      canonical: seedLink.canonical,
+      canonical: String(seedLink.canonical),
       metadata: {
         normalized: false,
         assetType: "native",
@@ -77,15 +80,15 @@ describe("Payment Flow Integration", () => {
     };
 
     paidPaymentItem = {
-      amount: seedLink.amount,
-      asset: seedLink.asset_code,
-      memo: seedLink.memo,
+      amount: String(seedLink.amount),
+      asset: String(seedLink.asset_code),
+      memo: String(seedLink.memo),
       timestamp: new Date().toISOString(),
-      txHash: seedTransaction.transaction_hash,
+      txHash: String(seedTransaction.transaction_hash),
       source: String(seedUser.public_key),
       destination: DEST_PUBLIC_KEY,
       status: "Success",
-      pagingToken: seedTransaction.paging_token,
+      pagingToken: String(seedTransaction.paging_token),
     };
 
     paymentLinksRepository = {
@@ -298,13 +301,13 @@ describe("Payment Flow Integration", () => {
       const expiredLink = store.findOne("links", "status", "expired");
       const ownerUser = store.findOne("users", "id", String(expiredLink.user_id));
 
-      const expiredRow = {
-        id: expiredLink.id,
-        owner_public_key: ownerUser.public_key,
+      const expiredRow: ExpiredPaymentLinkRow = {
+        id: String(expiredLink.id),
+        owner_public_key: String(ownerUser.public_key),
         destination_public_key: DEST_PUBLIC_KEY,
-        amount: expiredLink.amount,
-        asset_code: expiredLink.asset_code,
-        memo: expiredLink.memo,
+        amount: String(expiredLink.amount),
+        asset_code: String(expiredLink.asset_code),
+        memo: String(expiredLink.memo),
         expires_at: new Date(Date.now() - 86400000).toISOString(),
         matched_tx_hash: null,
         matched_at: null,
