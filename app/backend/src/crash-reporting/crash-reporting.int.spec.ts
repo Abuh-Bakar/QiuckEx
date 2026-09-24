@@ -22,7 +22,7 @@ describe('CrashReporting Integration', () => {
   beforeEach(async () => {
     const store = createInMemorySeedStore();
     isolation = createTestIsolation(store.client);
-    const prefix = await isolation.seed();
+    await isolation.seed();
 
     const [seedUser] = store.rows('users');
     const [seedReceipt] = store.rows('receipts');

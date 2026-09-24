@@ -64,7 +64,7 @@ describe("Payment Flow Integration", () => {
       memo: seedLink.memo,
       memoType: "text",
       privacy: false,
-      expiresAt: new Date(String(seedLink.expires_at)),
+      expiresAt: new Date(Date.now() + 30 * 86400000),
       acceptedAssets: [seedLink.asset_code],
       swapOptions: null,
       canonical: seedLink.canonical,
