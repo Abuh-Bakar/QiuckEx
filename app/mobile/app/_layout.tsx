@@ -14,6 +14,7 @@ if (typeof document !== "undefined" && !(globalThis as any).API_BASE_URL) {
 }
 import "../../src/lib/i18n";
 import { OfflineBanner } from "../components/resilience/offline-banner";
+import { PreviewEnvironmentBanner } from "../src/components/PreviewEnvironmentBanner";
 import { AppLockOverlay } from "../components/security/app-lock-overlay";
 import { SecurityProvider, useSecurity } from "../hooks/use-security";
 import { NotificationProvider } from "../components/notifications/NotificationContext";
@@ -246,6 +247,7 @@ function AppShell() {
 
   return (
     <>
+      <PreviewEnvironmentBanner />
       <OfflineBanner />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="onboarding" />
