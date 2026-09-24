@@ -64,6 +64,13 @@ export const envSchema = Joi.object({
     .optional()
     .description("Comma-separated list of pre-allowed token addresses"),
 
+  ANCHOR_DIRECTORY_JSON: Joi.string()
+    .empty("")
+    .optional()
+    .description(
+      "JSON array of configured anchor domains and supported country codes",
+    ),
+
   STELLAR_NETWORK_PASSPHRASE: Joi.string()
     .empty("")
     .optional()
@@ -742,6 +749,7 @@ export interface EnvConfig {
   MOBILE_RELEASE_NOTES: string;
   ROUTER_CONTRACT_ID?: string;
   ALLOWED_TOKENS?: string;
+  ANCHOR_DIRECTORY_JSON?: string;
   STELLAR_NETWORK_PASSPHRASE?: string;
   NETWORK: "testnet" | "mainnet";
   STELLAR_NETWORK?: "testnet" | "mainnet";

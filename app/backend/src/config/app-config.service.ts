@@ -503,6 +503,10 @@ export class AppConfigService {
     return raw ? raw.split(",").map((t) => t.trim()).filter(Boolean) : [];
   }
 
+  get anchorDirectoryJson(): string | undefined {
+    return this.configService.get("ANCHOR_DIRECTORY_JSON", { infer: true });
+  }
+
   /**
    * Get Stellar Network Passphrase
    */
