@@ -28,6 +28,7 @@ import {
   ReceiptListResponse,
   VerifyReceiptHashResponse,
 } from "./dto/receipt.dto";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 @Controller("v1/receipts")
 export class ReceiptsController {
@@ -46,6 +47,7 @@ export class ReceiptsController {
    * canonical transaction data, stable across retries.
    */
   @Get("tx/:txHash")
+  @RateLimitTier("public-read")
   @HttpCode(HttpStatus.OK)
   async getByTxHash(
     @Param("txHash") txHash: string,
@@ -71,6 +73,7 @@ export class ReceiptsController {
    *   cursor?   paging token from previous response
    */
   @Get("address/:address")
+  @RateLimitTier("search")
   @HttpCode(HttpStatus.OK)
   async getByAddress(
     @Param("address") address: string,
@@ -94,6 +97,7 @@ export class ReceiptsController {
    * without needing to fetch the full receipt.
    */
   @Post("verify-hash")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   async verifyHash(
     @Body() dto: VerifyReceiptHashDto,

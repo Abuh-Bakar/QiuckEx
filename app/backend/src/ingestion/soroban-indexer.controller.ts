@@ -14,6 +14,7 @@ import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min, IsArray } from
 
 import { SorobanEventIndexerService, LedgerRangeResult } from "./soroban-event-indexer.service";
 import type { UnparsedSorobanEventRecord, UnparsedSorobanEventReason } from "./unparsed-soroban-event.repository";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 class ReindexDto {
   @IsString()
@@ -55,6 +56,7 @@ export class SorobanIndexerController {
   constructor(private readonly indexer: SorobanEventIndexerService) {}
 
   @Post("reindex")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Reindex Soroban contract events for a ledger range (admin only)",
@@ -85,6 +87,7 @@ export class SorobanIndexerController {
   }
 
   @Get("unparsed-events")
+  @RateLimitTier("public-read")
   @ApiOperation({
     summary: "List pending unparsed Soroban events with filters",
     description:
@@ -106,6 +109,7 @@ export class SorobanIndexerController {
   }
 
   @Post("unparsed-events/replay")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Replay pending unparsed Soroban events (batch by limit)",
@@ -118,6 +122,7 @@ export class SorobanIndexerController {
   }
 
   @Post("unparsed-events/:pagingToken/replay")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Replay a single specific unparsed Soroban event",
@@ -130,6 +135,7 @@ export class SorobanIndexerController {
   }
 
   @Post("unparsed-events/replay/batch")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Replay a specific batch of unparsed Soroban events",

@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBody } from "@nestjs/swagger";
 import { ScamAlertsService } from "./scam-alerts.service";
 import { ScanLinkDto } from "../dto";
 import { ScanResultDto } from "./dto/scan-result.dto";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 @ApiTags("scam-alerts")
 @Controller("links")
@@ -10,6 +11,7 @@ export class ScamAlertsController {
   constructor(private readonly scamAlertsService: ScamAlertsService) {}
 
   @Post("scan")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Scan a payment link for scam indicators",

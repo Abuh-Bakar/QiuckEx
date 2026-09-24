@@ -5,6 +5,7 @@ import {
   IdempotencyInterceptor,
   IDEMPOTENCY_KEY_HEADER,
 } from '../common/idempotency/idempotency.interceptor';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 
 @ApiTags('fiat-ramps')
 @ApiHeader({
@@ -19,6 +20,7 @@ export class FiatRampsController {
   constructor(private readonly fiatRampsService: FiatRampsService) {}
 
   @Get('anchors')
+  @RateLimitTier("search")
   @ApiOperation({ summary: 'Fetch available anchors based on user location/asset' })
   @ApiResponse({ status: 200, description: 'List of available anchors' })
   async getAvailableAnchors(@Query('assetCode') assetCode: string, @Query('country') country: string) {
@@ -26,6 +28,7 @@ export class FiatRampsController {
   }
 
   @Post('deposit')
+  @RateLimitTier("mutation")
   @ApiOperation({ summary: 'Initiate SEP-24 hosted deposit flow' })
   @ApiResponse({ status: 201, description: 'Deposit flow initiated' })
   async initiateDeposit(@Body() depositDto: { assetCode: string; amount: number; userAccount: string; anchorDomain: string }) {
@@ -33,6 +36,7 @@ export class FiatRampsController {
   }
 
   @Post('withdraw')
+  @RateLimitTier("mutation")
   @ApiOperation({ summary: 'Initiate SEP-24 hosted withdrawal flow' })
   @ApiResponse({ status: 201, description: 'Withdrawal flow initiated' })
   async initiateWithdrawal(@Body() withdrawalDto: { assetCode: string; amount: number; userAccount: string; anchorDomain: string }) {
@@ -40,12 +44,14 @@ export class FiatRampsController {
   }
 
   @Post('kyc/callback')
+  @RateLimitTier("mutation")
   @ApiOperation({ summary: 'Handle KYC redirects and updates' })
   async handleKycCallback(@Body() callbackData: unknown) {
     return this.fiatRampsService.handleKycCallback(callbackData);
   }
 
   @Post('transaction/status')
+  @RateLimitTier("mutation")
   @ApiOperation({ summary: 'Securely handle transaction status updates' })
   async updateTransactionStatus(@Body() statusData: unknown) {
     return this.fiatRampsService.updateTransactionStatus(statusData);

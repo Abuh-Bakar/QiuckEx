@@ -21,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 
 import { MarketplaceService } from './marketplace.service';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import {
   ListUsernameDto,
   PlaceBidDto,
@@ -37,6 +38,7 @@ export class MarketplaceController {
   constructor(private readonly marketplaceService: MarketplaceService) {}
 
   @Post('list')
+  @RateLimitTier('mutation')
   @ApiOperation({ summary: 'List a username for sale' })
   @ApiBody({ type: ListUsernameDto })
   @ApiResponse({ status: 201, description: 'Listing created' })
@@ -60,6 +62,7 @@ export class MarketplaceController {
   }
 
   @Get()
+  @RateLimitTier('search')
   @ApiOperation({ summary: 'Get active listings with sort, filter, and pagination' })
   @ApiQuery({ name: 'limit', required: false, example: 20, description: 'Items per page (1-100)' })
   @ApiQuery({ name: 'cursor', required: false, description: 'Opaque pagination cursor' })
@@ -81,6 +84,7 @@ export class MarketplaceController {
   }
 
   @Get(':listingId/detail')
+  @RateLimitTier('public-read')
   @ApiOperation({ summary: 'Get listing detail with bids and action hints' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiQuery({
@@ -109,6 +113,7 @@ export class MarketplaceController {
   }
 
   @Get(':listingId')
+  @RateLimitTier('public-read')
   @ApiOperation({ summary: 'Get a specific listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiResponse({ status: 200, description: 'Listing details' })
@@ -126,6 +131,7 @@ export class MarketplaceController {
   }
 
   @Delete(':listingId')
+  @RateLimitTier('mutation')
   @ApiOperation({ summary: 'Cancel a listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiBody({ type: CancelListingDto })
@@ -148,6 +154,7 @@ export class MarketplaceController {
   }
 
   @Post(':listingId/bid')
+  @RateLimitTier('mutation')
   @ApiOperation({ summary: 'Place a bid on a listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiBody({ type: PlaceBidDto })
@@ -174,6 +181,7 @@ export class MarketplaceController {
   }
 
   @Get(':listingId/bids')
+  @RateLimitTier('public-read')
   @ApiOperation({ summary: 'Get all bids for a listing' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiQuery({ name: 'limit', required: false, description: 'Items per page (1-100)', example: 20 })
@@ -201,6 +209,7 @@ export class MarketplaceController {
   }
 
   @Post(':listingId/accept-bid/:bidId')
+  @RateLimitTier('mutation')
   @ApiOperation({ summary: 'Accept a bid — atomically transfers username ownership' })
   @ApiParam({ name: 'listingId', description: 'Listing UUID' })
   @ApiParam({ name: 'bidId', description: 'Bid UUID' })
