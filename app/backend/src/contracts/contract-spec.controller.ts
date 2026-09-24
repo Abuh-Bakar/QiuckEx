@@ -22,7 +22,7 @@ import { Request, Response } from 'express';
 
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
-import { RateLimitGroupTag } from '../auth/decorators/rate-limit-group.decorator';
+import { RateLimitGroupTag, RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import {
   ContractSpecResponseDto,
   ContractSpecsResponseDto,
@@ -43,6 +43,7 @@ export class ContractSpecController {
   constructor(private readonly specService: ContractSpecService) {}
 
   @Get('specs')
+  @RateLimitTier('public-read')
   @ApiOperation({
     summary: 'Get all contract specs for the active network',
     description:
@@ -66,6 +67,7 @@ export class ContractSpecController {
   }
 
   @Get('specs/:name')
+  @RateLimitTier('public-read')
   @ApiOperation({
     summary: 'Get contract spec for a specific contract',
     description:
@@ -95,6 +97,7 @@ export class ContractSpecController {
   }
 
   @Post('specs')
+  @RateLimitTier('mutation')
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @RateLimitGroupTag('authenticated')
@@ -114,6 +117,7 @@ export class ContractSpecController {
   }
 
   @Put('specs/:name')
+  @RateLimitTier('mutation')
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @RateLimitGroupTag('authenticated')

@@ -64,6 +64,13 @@ export const envSchema = Joi.object({
     .optional()
     .description("Comma-separated list of pre-allowed token addresses"),
 
+  ANCHOR_DIRECTORY_JSON: Joi.string()
+    .empty("")
+    .optional()
+    .description(
+      "JSON array of configured anchor domains and supported country codes",
+    ),
+
   STELLAR_NETWORK_PASSPHRASE: Joi.string()
     .empty("")
     .optional()
@@ -384,10 +391,94 @@ export const envSchema = Joi.object({
     .default(60000)
     .description("Webhook traffic sustained window in milliseconds"),
 
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(20)
+    .description("Tier: public-read burst request limit"),
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: public-read burst window in milliseconds"),
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(60)
+    .description("Tier: public-read sustained request limit"),
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: public-read sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_SEARCH_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(10)
+    .description("Tier: search burst request limit"),
+  RATE_LIMIT_TIER_SEARCH_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: search burst window in milliseconds"),
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(30)
+    .description("Tier: search sustained request limit"),
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: search sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_MUTATION_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(15)
+    .description("Tier: mutation burst request limit"),
+  RATE_LIMIT_TIER_MUTATION_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: mutation burst window in milliseconds"),
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(45)
+    .description("Tier: mutation sustained request limit"),
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: mutation sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_EXPORT_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(3)
+    .description("Tier: export burst request limit"),
+  RATE_LIMIT_TIER_EXPORT_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: export burst window in milliseconds"),
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(10)
+    .description("Tier: export sustained request limit"),
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: export sustained window in milliseconds"),
+
   RATE_LIMIT_KEY_ORDER: Joi.string()
-    .default("user_id,api_key,ip")
+    .default("api_key,user_id,ip")
     .description(
-      "Preferred key order for rate-limit identity. Allowed values: user_id,api_key,ip",
+      "Preferred key order for rate-limit identity. Allowed values: api_key,user_id,ip",
     ),
 
   // ---------------------------------------------------------------------------
@@ -658,6 +749,7 @@ export interface EnvConfig {
   MOBILE_RELEASE_NOTES: string;
   ROUTER_CONTRACT_ID?: string;
   ALLOWED_TOKENS?: string;
+  ANCHOR_DIRECTORY_JSON?: string;
   STELLAR_NETWORK_PASSPHRASE?: string;
   NETWORK: "testnet" | "mainnet";
   STELLAR_NETWORK?: "testnet" | "mainnet";
@@ -708,6 +800,22 @@ export interface EnvConfig {
   RATE_LIMIT_WEBHOOKS_BURST_TTL_MS: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_LIMIT: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_SEARCH_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_SEARCH_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_MUTATION_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_MUTATION_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_EXPORT_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_EXPORT_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_TTL_MS: number;
   RATE_LIMIT_KEY_ORDER: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;

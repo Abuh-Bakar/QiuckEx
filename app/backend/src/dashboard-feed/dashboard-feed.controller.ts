@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DashboardFeedService } from './dashboard-feed.service';
 import { GetFeedQueryDto } from './dto/get-feed.dto';
 import type { FeedResponse } from './dashboard-feed.types';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 
 @ApiTags('Dashboard Feed')
 @Controller('dashboard-feed')
@@ -11,6 +12,7 @@ export class DashboardFeedController {
   constructor(private readonly feedService: DashboardFeedService) {}
 
   @Get()
+  @RateLimitTier("search")
   @ApiOperation({
     summary: 'Get activity feed',
     description:

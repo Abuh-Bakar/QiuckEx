@@ -4,6 +4,7 @@ import {
   EnvironmentParityService,
   ParityCheckResult,
 } from "./environment-parity.service";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 interface ParityStatusResponse {
   success: boolean;
@@ -35,6 +36,7 @@ export class EnvironmentParityController {
   constructor(private readonly parityService: EnvironmentParityService) {}
 
   @Get("status")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "Get environment parity check status" })
   @ApiResponse({ status: 200, description: "Returns parity check results" })
   getParityStatus(): ParityStatusResponse {
@@ -55,6 +57,7 @@ export class EnvironmentParityController {
   }
 
   @Get("health")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "Quick health check for environment parity" })
   @ApiResponse({ status: 200, description: "Returns health status" })
   getHealth(): HealthResponse {

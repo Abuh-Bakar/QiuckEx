@@ -1,6 +1,7 @@
 import { Body, Controller, Post } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { PrivacyService, StealthEnvelope } from "./privacy.service";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 class EncryptRecipientDto {
   recipientAddress!: string;
@@ -23,6 +24,7 @@ export class PrivacyController {
   constructor(private readonly privacyService: PrivacyService) {}
 
   @Post("encrypt-recipient")
+  @RateLimitTier("mutation")
   @ApiOperation({
     summary: "Encrypt recipient metadata using recipient view public key",
   })
@@ -34,6 +36,7 @@ export class PrivacyController {
   }
 
   @Post("derive-shared-secret")
+  @RateLimitTier("mutation")
   @ApiOperation({
     summary: "Derive X25519 shared secret for non-custodial stealth flows",
   })
@@ -47,6 +50,7 @@ export class PrivacyController {
   }
 
   @Post("decrypt-recipient")
+  @RateLimitTier("mutation")
   @ApiOperation({
     summary: "Decrypt recipient metadata envelope (for local integration testing)",
   })
