@@ -10,6 +10,13 @@ import {
 import { AnchorClientService } from './anchor-client.service';
 import { AppConfigService } from '../config/app-config.service';
 
+interface AnchorDirectoryEntry {
+  domain: string;
+  name?: string;
+  type?: string;
+  supportedCountries?: string[];
+}
+
 /** Errors that should return a 400 (client-facing, expected). */
 const CLIENT_ERRORS: readonly string[] = [
   AnchorDiscoveryError.name,
@@ -32,25 +39,73 @@ export class FiatRampsService {
 
   async getAvailableAnchors(assetCode: string, country: string) {
     this.logger.log(`Fetching available anchors for ${assetCode} in ${country}`);
+
+    const configuredAnchors = this.parseAnchorDirectory();
+    const requestedAsset = assetCode.trim().toUpperCase();
+    const requestedCountry = country.trim().toUpperCase();
+
+    const eligibleAnchors = configuredAnchors.filter((anchor) => {
+      const countries = anchor.supportedCountries ?? [];
+      return (
+        countries.length === 0 ||
+        countries.some((supportedCountry) => supportedCountry.toUpperCase() === requestedCountry)
+      );
+    });
+
+    const discoveredAnchors = await Promise.all(
+      eligibleAnchors.map(async (anchor) => {
+        try {
+          const capabilities = await this.anchorClient.discoverAnchorCapabilities(anchor.domain);
+          if (!capabilities.supportedAssets.includes(requestedAsset)) {
+            return null;
+          }
+
+          return {
+            id: anchor.domain,
+            name: anchor.name ?? anchor.domain,
+            domain: anchor.domain,
+            supportedAssets: capabilities.supportedAssets,
+            type: anchor.type ?? 'unknown',
+          };
+        } catch (error) {
+          this.logger.warn(
+            `Skipping unavailable anchor ${anchor.domain}: ${(error as Error).message}`,
+          );
+          return null;
+        }
+      }),
+    );
+
     return {
       status: 'success',
-      data: [
-        {
-          id: 'moneygram',
-          name: 'MoneyGram',
-          domain: 'moneygram.stellar.org',
-          supportedAssets: ['USDC', 'XLM'],
-          type: 'cash',
-        },
-        {
-          id: 'banxa',
-          name: 'Banxa',
-          domain: 'banxa.stellar.org',
-          supportedAssets: ['USDC', 'EURC'],
-          type: 'bank_transfer',
-        },
-      ],
+      data: discoveredAnchors.filter(
+        (anchor): anchor is NonNullable<typeof anchor> => anchor !== null,
+      ),
     };
+  }
+
+  private parseAnchorDirectory(): AnchorDirectoryEntry[] {
+    const raw = this.appConfig.anchorDirectoryJson;
+    if (!raw) return [];
+
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed.filter((entry): entry is AnchorDirectoryEntry => {
+        if (!entry || typeof entry !== 'object') return false;
+        const candidate = entry as Partial<AnchorDirectoryEntry>;
+        return (
+          typeof candidate.domain === 'string' &&
+          (candidate.supportedCountries === undefined ||
+            (Array.isArray(candidate.supportedCountries) &&
+              candidate.supportedCountries.every((value) => typeof value === 'string')))
+        );
+      });
+    } catch (error) {
+      this.logger.warn(`Ignoring invalid ANCHOR_DIRECTORY_JSON: ${(error as Error).message}`);
+      return [];
+    }
   }
 
   async initiateDeposit(depositDto: {
