@@ -58,10 +58,18 @@ impl ReferenceHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+    fn stats_default_to_zero() {
+        let env = Env::default();
+        let contract_id = env.register(ReferenceHook, ());
+        let client = ReferenceHookClient::new(&env, &contract_id);
+
+        let stats = client.get_stats();
+        assert_eq!(stats.total_events, 0);
+        assert_eq!(stats.created, 0);
+        assert_eq!(stats.settled, 0);
+        assert_eq!(stats.refunded, 0);
     }
 }

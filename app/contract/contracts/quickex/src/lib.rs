@@ -77,7 +77,7 @@ mod test_context;
 mod ttl_policy;
 #[cfg(test)]
 mod ttl_policy_test;
-mod types;
+pub mod types;
 #[cfg(test)]
 mod upgrade_test;
 
