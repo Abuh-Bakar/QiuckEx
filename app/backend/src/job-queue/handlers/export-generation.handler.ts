@@ -14,6 +14,9 @@ import { SupabaseService } from '../../supabase/supabase.service';
 import { NotificationService } from '../../notifications/notification.service';
 import { ExportCompletedPayload } from '../../notifications/types/notification.types';
 import { ExportStorageService } from '../../exports/export-storage.service';
+import { NotificationPreferencesRepository } from '../../notifications/notification-preferences.repository';
+import { JobQueueService } from '../job-queue.service';
+import { JobType } from '../types';
 
 /**
  * Error thrown for permanent job failures (no retry)
@@ -41,6 +44,8 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
     private readonly supabase: SupabaseService,
     private readonly notificationService: NotificationService,
     private readonly exportStorageService: ExportStorageService,
+    private readonly notificationPrefsRepo: NotificationPreferencesRepository,
+    private readonly jobQueueService: JobQueueService,
   ) {}
 
   /**
@@ -269,11 +274,38 @@ export class ExportGenerationHandler implements JobHandler<ExportGenerationPaylo
     cancellationToken.throwIfCancelled();
 
     switch (deliveryMethod) {
-      case 'webhook':
-        // TODO: Implement webhook delivery
-        // For now, just log
-        this.logger.log(`Webhook delivery not yet implemented for user ${userId}`);
+      case 'webhook': {
+        // Get user's webhook preference
+        const webhookPrefs = await this.notificationPrefsRepo.getWebhooksByPublicKey(userId);
+        const webhookPref = webhookPrefs.find(p => p.enabled && p.webhookUrl);
+
+        if (!webhookPref || !webhookPref.webhookUrl) {
+          const errorMessage = `No enabled webhook URL found for user ${userId}`;
+          this.logger.error(errorMessage);
+          throw new Error(errorMessage);
+        }
+
+        // Enqueue webhook delivery job
+        await this.jobQueueService.enqueue(JobType.WEBHOOK_DELIVERY, {
+          recipientPublicKey: userId,
+          webhookUrl: webhookPref.webhookUrl,
+          eventType: 'export.completed',
+          eventId: `export:${jobId}`,
+          payload: {
+            exportType,
+            format,
+            recordCount,
+            jobId,
+            sizeBytes: Buffer.byteLength(exportData, 'utf8'),
+            data: exportData,
+          },
+        });
+
+        this.logger.log(
+          `Webhook delivery enqueued for user ${userId} (jobId: ${jobId}, url: ${webhookPref.webhookUrl})`,
+        );
         break;
+      }
 
       case 'email': {
         const payload: ExportCompletedPayload = {
