@@ -177,6 +177,7 @@ export class BranchPreviewController {
 
   @Post('admin/branch-previews/cleanup-expired')
   @RequireScopes('admin')
+  @RateLimitTier('mutation')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
