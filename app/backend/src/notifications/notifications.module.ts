@@ -119,6 +119,7 @@ import { TemplateVersionService } from "./template-versioning/template-version.s
     TelegramBotService,
     TelegramNotificationProvider,
     WebhookService,
+    InAppNotificationRepository,
   ],
 })
 export class NotificationsModule {}

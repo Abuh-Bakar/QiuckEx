@@ -6,8 +6,11 @@ import {
 import { SupabaseService } from "../../../supabase/supabase.service";
 import { NotificationService } from "../../../notifications/notification.service";
 import { ExportStorageService } from "../../../exports/export-storage.service";
+import { NotificationPreferencesRepository } from "../../../notifications/notification-preferences.repository";
+import { JobQueueService } from "../../job-queue.service";
 import { Job, CancellationToken, JobStatus } from "../../types";
 import { ExportGenerationPayload } from "../../types/job-payloads.types";
+import { JobType } from "../../types";
 import type { ExportCompletedPayload } from "../../../notifications/types/notification.types";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +78,8 @@ function makeCancellationToken(): CancellationToken {
 describe("ExportGenerationHandler – email delivery (BE-101)", () => {
   let handler: ExportGenerationHandler;
   let notificationService: jest.Mocked<NotificationService>;
+  let notificationPrefsRepo: jest.Mocked<NotificationPreferencesRepository>;
+  let jobQueueService: jest.Mocked<JobQueueService>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -98,11 +103,25 @@ describe("ExportGenerationHandler – email delivery (BE-101)", () => {
             issueDownloadToken: jest.fn().mockReturnValue({ token: 'test-token', expiresAt: Math.floor(Date.now() / 1000) + 3600 }),
           },
         },
+        {
+          provide: NotificationPreferencesRepository,
+          useValue: {
+            getWebhooksByPublicKey: jest.fn(),
+          },
+        },
+        {
+          provide: JobQueueService,
+          useValue: {
+            enqueue: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     handler = module.get<ExportGenerationHandler>(ExportGenerationHandler);
     notificationService = module.get(NotificationService);
+    notificationPrefsRepo = module.get(NotificationPreferencesRepository);
+    jobQueueService = module.get(JobQueueService);
   });
 
   describe("execute – email delivery succeeds", () => {
@@ -195,12 +214,142 @@ describe("ExportGenerationHandler – email delivery (BE-101)", () => {
     });
 
     it("does not send an email for webhook deliveries", async () => {
+      notificationPrefsRepo.getWebhooksByPublicKey.mockResolvedValue([
+        { id: "webhook-1", publicKey: "GUSER123", channel: "webhook", webhookUrl: "https://example.com/webhook", webhookSecret: "whsec_test", enabled: true, events: null, minAmountStroops: 0n },
+      ]);
+      jobQueueService.enqueue.mockResolvedValue("webhook-job-123");
+
       const job = makeJob({ deliveryMethod: "webhook" });
 
       await expect(
         handler.execute(job, makeCancellationToken()),
       ).resolves.toBeUndefined();
       expect(notificationService.deliverExportEmail).not.toHaveBeenCalled();
+      expect(jobQueueService.enqueue).toHaveBeenCalled();
+    });
+  });
+
+  describe("execute – webhook delivery", () => {
+    let notificationPrefsRepo: jest.Mocked<NotificationPreferencesRepository>;
+    let jobQueueService: jest.Mocked<JobQueueService>;
+
+    beforeEach(async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          ExportGenerationHandler,
+          {
+            provide: SupabaseService,
+            useValue: makeSupabaseMock([{ id: 1 }, { id: 2 }]),
+          },
+          {
+            provide: NotificationService,
+            useValue: {
+              deliverExportEmail: jest.fn(),
+              notifyExportFailed: jest.fn(),
+            },
+          },
+          {
+            provide: ExportStorageService,
+            useValue: {
+              uploadArtifact: jest.fn().mockResolvedValue({ storageKey: 'exports/GUSER123/job-42.csv', sizeBytes: 10 }),
+              issueDownloadToken: jest.fn().mockReturnValue({ token: 'test-token', expiresAt: Math.floor(Date.now() / 1000) + 3600 }),
+            },
+          },
+          {
+            provide: NotificationPreferencesRepository,
+            useValue: {
+              getWebhooksByPublicKey: jest.fn(),
+            },
+          },
+          {
+            provide: JobQueueService,
+            useValue: {
+              enqueue: jest.fn(),
+            },
+          },
+        ],
+      }).compile();
+
+      handler = module.get<ExportGenerationHandler>(ExportGenerationHandler);
+      notificationPrefsRepo = module.get(NotificationPreferencesRepository);
+      jobQueueService = module.get(JobQueueService);
+    });
+
+    it("enqueues webhook delivery job with correct payload", async () => {
+      notificationPrefsRepo.getWebhooksByPublicKey.mockResolvedValue([
+        { id: "webhook-1", publicKey: "GUSER123", channel: "webhook", webhookUrl: "https://example.com/webhook", webhookSecret: "whsec_test", enabled: true, events: null, minAmountStroops: 0n },
+      ]);
+      jobQueueService.enqueue.mockResolvedValue("webhook-job-123");
+
+      const job = makeJob({ deliveryMethod: "webhook" });
+
+      await expect(
+        handler.execute(job, makeCancellationToken()),
+      ).resolves.toBeUndefined();
+
+      expect(notificationPrefsRepo.getWebhooksByPublicKey).toHaveBeenCalledWith("GUSER123");
+      expect(jobQueueService.enqueue).toHaveBeenCalledWith(
+        JobType.WEBHOOK_DELIVERY,
+        expect.objectContaining({
+          recipientPublicKey: "GUSER123",
+          webhookUrl: "https://example.com/webhook",
+          eventType: "export.completed",
+          eventId: "export:job-42",
+          payload: expect.objectContaining({
+            exportType: "transactions",
+            format: "csv",
+            recordCount: 2,
+            jobId: "job-42",
+          }),
+        }),
+      );
+    });
+
+    it("throws when no enabled webhook URL is found", async () => {
+      notificationPrefsRepo.getWebhooksByPublicKey.mockResolvedValue([]);
+
+      const job = makeJob({ deliveryMethod: "webhook" });
+
+      await expect(
+        handler.execute(job, makeCancellationToken()),
+      ).rejects.toThrow(/No enabled webhook URL found for user GUSER123/);
+
+      expect(jobQueueService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("throws when webhook preference exists but has no URL", async () => {
+      notificationPrefsRepo.getWebhooksByPublicKey.mockResolvedValue([
+        { id: "webhook-1", publicKey: "GUSER123", channel: "webhook", webhookUrl: undefined, webhookSecret: "whsec_test", enabled: true, events: null, minAmountStroops: 0n },
+      ]);
+
+      const job = makeJob({ deliveryMethod: "webhook" });
+
+      await expect(
+        handler.execute(job, makeCancellationToken()),
+      ).rejects.toThrow(/No enabled webhook URL found for user GUSER123/);
+
+      expect(jobQueueService.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("selects first enabled webhook when multiple exist", async () => {
+      notificationPrefsRepo.getWebhooksByPublicKey.mockResolvedValue([
+        { id: "webhook-1", publicKey: "GUSER123", channel: "webhook", webhookUrl: "https://example.com/webhook1", webhookSecret: "whsec_test1", enabled: true, events: null, minAmountStroops: 0n },
+        { id: "webhook-2", publicKey: "GUSER123", channel: "webhook", webhookUrl: "https://example.com/webhook2", webhookSecret: "whsec_test2", enabled: true, events: null, minAmountStroops: 0n },
+      ]);
+      jobQueueService.enqueue.mockResolvedValue("webhook-job-123");
+
+      const job = makeJob({ deliveryMethod: "webhook" });
+
+      await expect(
+        handler.execute(job, makeCancellationToken()),
+      ).resolves.toBeUndefined();
+
+      expect(jobQueueService.enqueue).toHaveBeenCalledWith(
+        JobType.WEBHOOK_DELIVERY,
+        expect.objectContaining({
+          webhookUrl: "https://example.com/webhook1",
+        }),
+      );
     });
   });
 
