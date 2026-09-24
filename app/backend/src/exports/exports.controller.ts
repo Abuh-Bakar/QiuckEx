@@ -22,6 +22,7 @@ import {
 import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import { JobQueueService } from '../job-queue/job-queue.service';
 import { JobType } from '../job-queue/types';
 import { ExportGenerationPayload } from '../job-queue/types/job-payloads.types';
@@ -56,6 +57,7 @@ export class ExportsController {
    * The export will be delivered via the specified deliveryMethod.
    */
   @Post()
+  @RateLimitTier('export')
   @ApiOperation({ summary: 'Request a data export' })
   @ApiResponse({
     status: 201,
@@ -112,6 +114,7 @@ export class ExportsController {
    * callers do not receive signal about which condition triggered the rejection.
    */
   @Get(':jobId/download')
+  @RateLimitTier('public-read')
   @ApiOperation({ summary: 'Redeem a signed export download link' })
   @ApiResponse({ status: 302, description: 'Redirect to presigned download URL' })
   @ApiResponse({ status: 400, description: 'Token invalid, expired, or tampered' })

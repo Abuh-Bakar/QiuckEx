@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
-import { RateLimitGroupTag } from '../auth/decorators/rate-limit-group.decorator';
+import { RateLimitGroupTag, RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import {
   SeedResetOptionsDto,
   SeedResetReportDto,
@@ -44,6 +44,7 @@ export class SeedResetController {
   ) {}
 
   @Post('trigger')
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @ApiOperation({
@@ -61,6 +62,7 @@ export class SeedResetController {
   }
 
   @Post('force')
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @ApiOperation({
@@ -77,6 +79,7 @@ export class SeedResetController {
   }
 
   @Get('status')
+  @RateLimitTier("public-read")
   @RequireScopes('admin')
   @ApiOperation({
     summary: 'Get seed reset scheduler status',
@@ -95,6 +98,7 @@ export class SeedResetController {
   }
 
   @Get('running')
+  @RateLimitTier("public-read")
   @RequireScopes('admin')
   @ApiOperation({
     summary: 'Check if a reset is currently running',
@@ -106,6 +110,7 @@ export class SeedResetController {
   }
 
   @Post('seed')
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @ApiOperation({
@@ -120,6 +125,7 @@ export class SeedResetController {
   }
 
   @Post('clear')
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @RequireScopes('admin')
   @ApiOperation({
@@ -134,6 +140,7 @@ export class SeedResetController {
   }
 
   @Get('status/data')
+  @RateLimitTier("public-read")
   @RequireScopes('admin')
   @ApiOperation({
     summary: 'Get current demo data status',

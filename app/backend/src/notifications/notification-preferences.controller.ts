@@ -17,6 +17,7 @@ import {
   NotificationPreferenceResponseDto,
 } from "./dto/notification-preferences.dto";
 import type { NotificationChannel } from "./types/notification.types";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 
 /**
  * REST API for managing per-wallet notification preferences.
@@ -40,6 +41,7 @@ export class NotificationPreferencesController {
    * List all notification preferences for a wallet.
    */
   @Get(":publicKey")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "List notification preferences for a wallet" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
   @ApiResponse({ status: 200, type: [NotificationPreferenceResponseDto] })
@@ -56,6 +58,7 @@ export class NotificationPreferencesController {
    * Create or update a channel preference for a wallet.
    */
   @Put(":publicKey")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Create or update a notification channel preference",
@@ -91,6 +94,7 @@ export class NotificationPreferencesController {
    * Opt-out of a specific notification channel (soft disable).
    */
   @Delete(":publicKey/:channel")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: "Opt-out of a notification channel (soft disable)" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })

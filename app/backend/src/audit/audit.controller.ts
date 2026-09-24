@@ -2,20 +2,20 @@ import { Controller, Get, Query, Res, Delete } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { QueryAuditLogsDto } from './audit.model';
 import { Response } from 'express';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 
 @Controller('admin/audit')
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
-  // Admin endpoint to query logs with filters and pagination
   @Get()
+  @RateLimitTier("public-read")
   queryLogs(@Query() query: QueryAuditLogsDto) {
-    // In a real app, this route would be protected by an AdminGuard
     return this.auditService.query(query);
   }
 
-  // Export capability (CSV)
   @Get('export')
+  @RateLimitTier("export")
   async exportCsv(@Res() res: Response) {
     const csv = await this.auditService.exportCsv();
     res.header('Content-Type', 'text/csv');
@@ -23,10 +23,9 @@ export class AuditController {
     return res.send(csv);
   }
 
-  // Manual trigger for retention strategy (could also be a cron job)
   @Delete('retention')
+  @RateLimitTier("mutation")
   applyRetentionStrategy() {
-    // Defaulting to 90 days retention policy
     return this.auditService.applyRetention(90);
   }
 }

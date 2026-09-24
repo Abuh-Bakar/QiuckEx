@@ -82,7 +82,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       const reqRecord = request as Record<string, unknown>;
       const rateLimitContext =
         (reqRecord["rateLimitContext"] as
-          | { group?: string; keyType?: string }
+          | { group?: string; tier?: string; keyType?: string }
           | undefined) ?? {};
 
       const route = this.resolveRoute(request);
@@ -90,7 +90,7 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
       this.metricsService?.recordRateLimitedRequest(
         request.method,
         route,
-        rateLimitContext.group ?? "public",
+        rateLimitContext.tier ?? rateLimitContext.group ?? "public",
         rateLimitContext.keyType ?? "ip",
       );
     } else if (exception instanceof HttpException) {
