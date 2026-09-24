@@ -40,6 +40,8 @@ mod fee_treasury_test;
 mod fuzz_test;
 mod hook;
 #[cfg(test)]
+mod hook_failure_events_test;
+#[cfg(test)]
 mod hook_reentrancy_test;
 #[cfg(test)]
 mod metadata_test;

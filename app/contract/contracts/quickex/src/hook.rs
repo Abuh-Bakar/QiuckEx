@@ -1,5 +1,12 @@
-use crate::{errors::QuickexError, storage, types::HookEventKind};
-use soroban_sdk::{Address, BytesN, Env, IntoVal, Symbol, Vec};
+use crate::{
+    errors::QuickexError,
+    events::{publish_hook_invocation_failed, publish_hook_invocation_skipped},
+    storage,
+    types::{HookEventKind, HookFailureReason},
+};
+use soroban_sdk::{
+    xdr::ScErrorType, Address, BytesN, Env, Error as HostError, IntoVal, Symbol, Vec,
+};
 
 pub fn register_hook(env: &Env, hook_contract: Address) -> Result<(), QuickexError> {
     if !storage::is_hook_allowed(env, &hook_contract) {
@@ -52,7 +59,19 @@ pub fn invoke_hooks(
     amount: i128,
     fee: i128,
 ) {
+    let event_kind_code = event_kind as u32;
+
     if storage::get_reentrancy_guard(env) {
+        // The whole batch is skipped, not just one hook — no hook in the
+        // registry gets invoked for this event while the guard is held.
+        let hook_count = storage::get_registered_hooks(env).len();
+        publish_hook_invocation_skipped(
+            env,
+            escrow_id.clone(),
+            event_kind_code,
+            HookFailureReason::ReentrancyGuardActive as u32,
+            hook_count,
+        );
         return;
     }
 
@@ -61,19 +80,42 @@ pub fn invoke_hooks(
     for hook in hooks {
         let args = soroban_sdk::vec![
             env,
-            (event_kind as u32).into_val(env),
+            event_kind_code.into_val(env),
             escrow_id.into_val(env),
             owner.clone().into_val(env),
             token.clone().into_val(env),
             amount.into_val(env),
             fee.into_val(env),
         ];
-        // Swallow result — a failing hook must never abort the primary transaction.
-        let _ = env.try_invoke_contract::<soroban_sdk::Val, soroban_sdk::Val>(
+        // A failing hook must never abort the primary transaction — the
+        // result is inspected only to classify and publish a failure
+        // reason, never propagated as an error. The error type is
+        // `HostError` (not `Val`): a `Val` would accept any error shape,
+        // including the trap the host synthesizes for a raw hook panic, so
+        // it can't tell "the hook aborted" apart from "the hook returned a
+        // structured contract error" — `HostError::is_type` can.
+        let result = env.try_invoke_contract::<soroban_sdk::Val, HostError>(
             &hook,
             &Symbol::new(env, "on_escrow_event"),
             args,
         );
+        if let Err(invoke_err) = result {
+            let reason = match invoke_err {
+                // The hook ran to completion and returned an explicit
+                // contract error (e.g. via `panic_with_error!`).
+                Ok(err) if err.is_type(ScErrorType::Contract) => HookFailureReason::ContractError,
+                // Anything else — a raw panic/trap, exceeded resource
+                // limits, or a host-level invocation failure.
+                _ => HookFailureReason::InvocationAborted,
+            };
+            publish_hook_invocation_failed(
+                env,
+                hook,
+                escrow_id.clone(),
+                event_kind_code,
+                reason as u32,
+            );
+        }
     }
     storage::set_reentrancy_guard(env, &false);
 }
