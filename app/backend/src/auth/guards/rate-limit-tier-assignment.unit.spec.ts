@@ -1,8 +1,8 @@
 import { PATH_METADATA, METHOD_METADATA } from "@nestjs/common/constants";
 import { RequestMethod } from "@nestjs/common";
+import type { RateLimitTier } from "../../config/rate-limit.config";
 import {
   RATE_LIMIT_TIER_METADATA_KEY,
-  RateLimitTier,
 } from "../../config/rate-limit.config";
 
 import { HealthController } from "../../health/health.controller";

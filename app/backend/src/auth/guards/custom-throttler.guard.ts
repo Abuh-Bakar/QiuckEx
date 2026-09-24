@@ -6,12 +6,14 @@ import {
   ThrottlerRequest,
 } from "@nestjs/throttler";
 import { parse } from "ipaddr.js";
-import {
-  RATE_LIMIT_GROUP_METADATA_KEY,
-  RATE_LIMIT_TIER_METADATA_KEY,
+import type {
   RateLimitGroup,
   RateLimitKeyType,
   RateLimitTier,
+} from "../../config/rate-limit.config";
+import {
+  RATE_LIMIT_GROUP_METADATA_KEY,
+  RATE_LIMIT_TIER_METADATA_KEY,
   THROTTLER_BURST_NAME,
   throttlerConfig,
 } from "../../config/rate-limit.config";
