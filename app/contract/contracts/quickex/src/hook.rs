@@ -1,5 +1,38 @@
 use crate::{errors::QuickexError, storage, types::HookEventKind};
-use soroban_sdk::{Address, BytesN, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{contractclient, Address, BytesN, Env, IntoVal, Symbol, Vec};
+
+/// Interface that must be implemented by any contract registering as a QuickEx hook.
+///
+/// Hooks are invoked synchronously during the main contract's lifecycle events
+/// (`Create`, `Settle`, `Refund`).
+///
+/// ## Failure Isolation
+/// Any error, panic, or trap within a hook is swallowed by the QuickEx contract
+/// and does NOT abort the primary transaction. A failing hook will simply be
+/// skipped for that event, and the QuickEx transaction will proceed.
+///
+/// ## Invocation Ordering
+/// Hooks are invoked in the order they were registered.
+///
+/// ## Resource Limits
+/// Hook execution consumes Soroban compute and storage budget from the overall
+/// transaction limits. Because hook failures do not abort the parent transaction,
+/// if a hook traps (e.g. out of memory, generic panic), it is ignored. However,
+/// if the hook consumes too much overall CPU or memory budget such that the
+/// parent transaction hits its limits, the entire transaction will fail.
+/// Hook integrators must be mindful of their compute overhead.
+#[contractclient(name = "HookInterfaceClient")]
+pub trait HookInterface {
+    fn on_escrow_event(
+        env: Env,
+        event_kind: u32,
+        escrow_id: BytesN<32>,
+        owner: Address,
+        token: Address,
+        amount: i128,
+        fee: i128,
+    );
+}
 
 pub fn register_hook(env: &Env, hook_contract: Address) -> Result<(), QuickexError> {
     if !storage::is_hook_allowed(env, &hook_contract) {

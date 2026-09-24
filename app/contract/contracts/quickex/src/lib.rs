@@ -38,9 +38,11 @@ mod fee_test;
 mod fee_treasury_test;
 #[cfg(test)]
 mod fuzz_test;
-mod hook;
+pub mod hook;
 #[cfg(test)]
 mod hook_reentrancy_test;
+#[cfg(test)]
+mod hook_reference_test;
 #[cfg(test)]
 mod metadata_test;
 mod migration;
@@ -75,7 +77,7 @@ mod test_context;
 mod ttl_policy;
 #[cfg(test)]
 mod ttl_policy_test;
-mod types;
+pub mod types;
 #[cfg(test)]
 mod upgrade_test;
 
