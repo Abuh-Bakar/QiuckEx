@@ -18,6 +18,34 @@ describe('ContractRegistryService', () => {
     jest.restoreAllMocks();
   });
 
+
+  it('GETs the backend registry at /contracts/registry (no /api prefix) and parses network result', async () => {
+    const mockBody = envelope({
+      quickex: {
+        id: 'C321',
+        wasmHash: 'abc',
+        version: 1,
+        schemaVersion: '1.0.0',
+        schemaCompatibility: { min: '1.0.0', max: '1.0.0' },
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    const fetchMock = jest.fn(() =>
+      Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(mockBody) })
+    ) as jest.Mock;
+    global.fetch = fetchMock;
+
+    const result = await ContractRegistryService.sync('http://localhost:3000');
+
+    expect(fetchMock).toHaveBeenCalledWith('http://localhost:3000/contracts/registry');
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/api/contracts/registry'));
+    expect(result.source).toBe('network');
+    expect(result.isStale).toBe(false);
+    expect(result.registry.quickex.id).toBe('C321');
+    expect(result.fetchedAt).toEqual(expect.any(Number));
+  });
+
   it('fetches fresh registry and caches it', async () => {
     const mockBody = envelope({ quickex: { id: 'C123', version: 1 } });
     global.fetch = jest.fn(() =>
@@ -25,6 +53,7 @@ describe('ContractRegistryService', () => {
     ) as jest.Mock;
 
     const result = await ContractRegistryService.sync('http://localhost');
+    expect(global.fetch).toHaveBeenCalledWith('http://localhost/contracts/registry');
     expect(result.registry.quickex.id).toBe('C123');
     expect(result.source).toBe('network');
     expect(result.isStale).toBe(false);
