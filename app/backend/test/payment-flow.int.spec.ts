@@ -9,7 +9,10 @@
  *   5. Simulate link expiry
  *   6. Verify state machine transitions
  *
- * External services (Horizon, Supabase) are mocked.
+ * External services (Horizon, Supabase) are mocked. All fixtures (usernames,
+ * public keys, payment links, transactions and receipts) come from the
+ * deterministic seeding utility, and each test is isolated via
+ * `createTestIsolation`.
  */
 import { Test, TestingModule } from "@nestjs/testing";
 import { NotFoundException } from "@nestjs/common";
@@ -24,6 +27,8 @@ import { LinkState } from "../src/links/link-state-machine";
 import { PaymentLinkExpiryService } from "../src/links/payment-link-expiry.service";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { AuditService } from "../src/audit/audit.service";
+import { createInMemorySeedStore } from "../src/testing/in-memory-seed.store";
+import { createTestIsolation } from "../src/testing/test-isolation.util";
 
 describe("Payment Flow Integration", () => {
   let paymentLinkService: PaymentLinkService;
@@ -33,34 +38,68 @@ describe("Payment Flow Integration", () => {
   let linksService: jest.Mocked<LinksService>;
   let auditService: jest.Mocked<AuditService>;
   let events: EventEmitter2;
+  let isolation: ReturnType<typeof createTestIsolation>;
+  let store: ReturnType<typeof createInMemorySeedStore>;
 
-  const DEST_PUBLIC_KEY = "GABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
-
-  const baseMetadata = {
-    amount: "50.0000000",
-    asset: "XLM",
-    username: "alice",
-    memo: "Coffee payment",
-    memoType: "text" as const,
-    privacy: false,
-    expiresAt: new Date(Date.now() + 86400000 * 30),
-    acceptedAssets: ["XLM"],
-    swapOptions: null,
-    canonical: "amount=50.0000000&asset=XLM&memo=Coffee%20payment",
-    metadata: {
-      normalized: false,
-      assetType: "native",
-      linkType: "standard",
-      securityLevel: "medium",
-    },
-  };
+  let DEST_PUBLIC_KEY: string;
+  let baseMetadata: Record<string, unknown>;
+  let paidPaymentItem: Record<string, unknown>;
 
   beforeEach(async () => {
+    store = createInMemorySeedStore();
+    isolation = createTestIsolation(store.client);
+    await isolation.seed();
+
+    const [seedUser] = store.rows("users");
+    const [seedLink] = store.rows("links");
+    const [seedTransaction] = store.rows("transactions");
+    const aliceUsername = store.findOne("usernames", "username", "alice");
+
+    DEST_PUBLIC_KEY = String(aliceUsername.public_key);
+
+    baseMetadata = {
+      amount: seedLink.amount,
+      asset: seedLink.asset_code,
+      username: seedLink.username,
+      memo: seedLink.memo,
+      memoType: "text",
+      privacy: false,
+      expiresAt: new Date(String(seedLink.expires_at)),
+      acceptedAssets: [seedLink.asset_code],
+      swapOptions: null,
+      canonical: seedLink.canonical,
+      metadata: {
+        normalized: false,
+        assetType: "native",
+        linkType: "standard",
+        securityLevel: "medium",
+      },
+    };
+
+    paidPaymentItem = {
+      amount: seedLink.amount,
+      asset: seedLink.asset_code,
+      memo: seedLink.memo,
+      timestamp: new Date().toISOString(),
+      txHash: seedTransaction.transaction_hash,
+      source: String(seedUser.public_key),
+      destination: DEST_PUBLIC_KEY,
+      status: "Success",
+      pagingToken: seedTransaction.paging_token,
+    };
+
     paymentLinksRepository = {
       getPublicKeyByUsername: jest.fn(),
       markExpiredLinks: jest.fn().mockResolvedValue([]),
       insertExpiryAudit: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PaymentLinksRepository>;
+
+    paymentLinksRepository.getPublicKeyByUsername.mockImplementation(
+      async (username: string) => {
+        const row = store.findOne("usernames", "username", username);
+        return row ? (row.public_key as string) : null;
+      },
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -97,17 +136,16 @@ describe("Payment Flow Integration", () => {
     events = module.get(EventEmitter2);
   });
 
+  afterEach(async () => {
+    await isolation.cleanup();
+  });
+
   // -------------------------------------------------------------------------
   // Scenario 1: Full payment lifecycle (create → pay)
   // -------------------------------------------------------------------------
   describe("Scenario 1: Payment link created then paid", () => {
     it("should transition from ACTIVE to PAID when matching payment arrives", async () => {
-      // Step 1: Username lookup succeeds
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(
-        DEST_PUBLIC_KEY,
-      );
-
-      // Step 2: Metadata generated
+      // Metadata generated from the seeded dataset
       linksService.generateMetadata.mockResolvedValue(baseMetadata);
 
       // Step 3: No payment found yet → ACTIVE
@@ -117,10 +155,10 @@ describe("Payment Flow Integration", () => {
       });
 
       const statusBefore = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
-        asset: "XLM",
-        memo: "Coffee payment",
+        username: baseMetadata.username as string,
+        amount: Number(baseMetadata.amount),
+        asset: baseMetadata.asset as string,
+        memo: baseMetadata.memo as string,
       });
 
       expect(statusBefore.state).toBe(LinkState.ACTIVE);
@@ -129,31 +167,19 @@ describe("Payment Flow Integration", () => {
 
       // Step 4: Simulate payment arriving on-chain
       horizonService.getPayments.mockResolvedValue({
-        items: [
-          {
-            amount: "50.0000000",
-            asset: "XLM",
-            memo: "Coffee payment",
-            timestamp: new Date().toISOString(),
-            txHash: "tx_hash_abc123",
-            source: "GSOURCE123",
-            destination: DEST_PUBLIC_KEY,
-            status: "Success" as const,
-            pagingToken: "tok1",
-          },
-        ],
-        nextCursor: "tok1",
+        items: [paidPaymentItem],
+        nextCursor: paidPaymentItem.pagingToken as string,
       });
 
       const statusAfter = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
-        asset: "XLM",
-        memo: "Coffee payment",
+        username: baseMetadata.username as string,
+        amount: Number(baseMetadata.amount),
+        asset: baseMetadata.asset as string,
+        memo: baseMetadata.memo as string,
       });
 
       expect(statusAfter.state).toBe(LinkState.PAID);
-      expect(statusAfter.transactionHash).toBe("tx_hash_abc123");
+      expect(statusAfter.transactionHash).toBe(paidPaymentItem.txHash);
       expect(statusAfter.paidAt).toBeInstanceOf(Date);
       expect(statusAfter.userMessage).toContain("completed");
       expect(statusAfter.availableActions).toContain("view_transaction");
@@ -170,10 +196,6 @@ describe("Payment Flow Integration", () => {
         expiresAt: new Date(Date.now() - 86400000), // Yesterday
       };
 
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(
-        DEST_PUBLIC_KEY,
-      );
-
       linksService.generateMetadata.mockResolvedValue(expiredMetadata);
 
       horizonService.getPayments.mockResolvedValue({
@@ -182,8 +204,8 @@ describe("Payment Flow Integration", () => {
       });
 
       const status = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
+        username: expiredMetadata.username as string,
+        amount: Number(expiredMetadata.amount),
       });
 
       expect(status.state).toBe(LinkState.EXPIRED);
@@ -197,8 +219,6 @@ describe("Payment Flow Integration", () => {
   // -------------------------------------------------------------------------
   describe("Scenario 3: Username not found", () => {
     it("should throw NotFoundException for unknown username", async () => {
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(null);
-
       await expect(
         paymentLinkService.getPaymentLinkStatus({
           username: "nonexistent_user",
@@ -213,35 +233,25 @@ describe("Payment Flow Integration", () => {
   // -------------------------------------------------------------------------
   describe("Scenario 4: Payment amount mismatch", () => {
     it("should remain ACTIVE when payment amount does not match", async () => {
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(
-        DEST_PUBLIC_KEY,
-      );
-
       linksService.generateMetadata.mockResolvedValue(baseMetadata);
 
       // Payment with wrong amount
       horizonService.getPayments.mockResolvedValue({
         items: [
           {
+            ...paidPaymentItem,
             amount: "25.0000000", // Wrong amount!
-            asset: "XLM",
-            memo: "Coffee payment",
-            timestamp: new Date().toISOString(),
             txHash: "tx_wrong_amount",
-            source: "GSOURCE123",
-            destination: DEST_PUBLIC_KEY,
-            status: "Success" as const,
-            pagingToken: "tok1",
           },
         ],
         nextCursor: "tok1",
       });
 
       const status = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
-        asset: "XLM",
-        memo: "Coffee payment",
+        username: baseMetadata.username as string,
+        amount: Number(baseMetadata.amount),
+        asset: baseMetadata.asset as string,
+        memo: baseMetadata.memo as string,
       });
 
       expect(status.state).toBe(LinkState.ACTIVE);
@@ -254,35 +264,25 @@ describe("Payment Flow Integration", () => {
   // -------------------------------------------------------------------------
   describe("Scenario 5: Payment asset mismatch", () => {
     it("should remain ACTIVE when payment asset does not match", async () => {
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(
-        DEST_PUBLIC_KEY,
-      );
-
       linksService.generateMetadata.mockResolvedValue(baseMetadata);
 
       // Payment with wrong asset
       horizonService.getPayments.mockResolvedValue({
         items: [
           {
-            amount: "50.0000000",
+            ...paidPaymentItem,
             asset: "USDC", // Wrong asset!
-            memo: "Coffee payment",
-            timestamp: new Date().toISOString(),
             txHash: "tx_wrong_asset",
-            source: "GSOURCE123",
-            destination: DEST_PUBLIC_KEY,
-            status: "Success" as const,
-            pagingToken: "tok1",
           },
         ],
         nextCursor: "tok1",
       });
 
       const status = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
-        asset: "XLM",
-        memo: "Coffee payment",
+        username: baseMetadata.username as string,
+        amount: Number(baseMetadata.amount),
+        asset: baseMetadata.asset as string,
+        memo: baseMetadata.memo as string,
       });
 
       expect(status.state).toBe(LinkState.ACTIVE);
@@ -295,13 +295,16 @@ describe("Payment Flow Integration", () => {
   // -------------------------------------------------------------------------
   describe("Scenario 6: Expiry sweep marks expired links", () => {
     it("should mark expired links and emit events", async () => {
+      const expiredLink = store.findOne("links", "status", "expired");
+      const ownerUser = store.findOne("users", "id", String(expiredLink.user_id));
+
       const expiredRow = {
-        id: "link-uuid-1",
-        owner_public_key: "GOWNER",
+        id: expiredLink.id,
+        owner_public_key: ownerUser.public_key,
         destination_public_key: DEST_PUBLIC_KEY,
-        amount: "50.0000000",
-        asset_code: "XLM",
-        memo: "Coffee payment",
+        amount: expiredLink.amount,
+        asset_code: expiredLink.asset_code,
+        memo: expiredLink.memo,
         expires_at: new Date(Date.now() - 86400000).toISOString(),
         matched_tx_hash: null,
         matched_at: null,
@@ -315,17 +318,17 @@ describe("Payment Flow Integration", () => {
 
       expect(count).toBe(1);
       expect(paymentLinksRepository.insertExpiryAudit).toHaveBeenCalledWith(
-        expect.objectContaining({ linkId: "link-uuid-1" }),
+        expect.objectContaining({ linkId: expiredLink.id }),
       );
       expect(auditService.log).toHaveBeenCalledWith(
         "system:expiry-worker",
         "payment_link.expired",
-        "link-uuid-1",
+        String(expiredLink.id),
         expect.objectContaining({ runId: "sweep-run-1" }),
       );
       expect(emitSpy).toHaveBeenCalledWith(
         "payment.link.expired",
-        expect.objectContaining({ linkId: "link-uuid-1" }),
+        expect.objectContaining({ linkId: expiredLink.id }),
       );
     });
   });
@@ -335,20 +338,16 @@ describe("Payment Flow Integration", () => {
   // -------------------------------------------------------------------------
   describe("Scenario 7: Horizon failure handled gracefully", () => {
     it("should return ACTIVE when Horizon is unavailable", async () => {
-      paymentLinksRepository.getPublicKeyByUsername.mockResolvedValue(
-        DEST_PUBLIC_KEY,
-      );
-
       linksService.generateMetadata.mockResolvedValue(baseMetadata);
 
       // Horizon throws
       horizonService.getPayments.mockRejectedValue(new Error("Horizon down"));
 
       const status = await paymentLinkService.getPaymentLinkStatus({
-        username: "alice",
-        amount: 50,
-        asset: "XLM",
-        memo: "Coffee payment",
+        username: baseMetadata.username as string,
+        amount: Number(baseMetadata.amount),
+        asset: baseMetadata.asset as string,
+        memo: baseMetadata.memo as string,
       });
 
       // Should assume not paid when Horizon is down
