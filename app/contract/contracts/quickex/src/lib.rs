@@ -38,7 +38,7 @@ mod fee_test;
 mod fee_treasury_test;
 #[cfg(test)]
 mod fuzz_test;
-mod hook;
+pub mod hook;
 #[cfg(test)]
 mod hook_reentrancy_test;
 #[cfg(test)]
