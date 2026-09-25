@@ -29,7 +29,12 @@ export function AuditLogs() {
 
     const load = async () => {
       try {
-        const response = await fetch(`${apiBase}/admin/audit`, { cache: "no-store" });
+        const response = await fetch(`${apiBase}/admin/audit`, {
+          cache: "no-store",
+          headers: {
+            "x-api-key": process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "",
+          },
+        });
         if (!response.ok) {
           throw new Error(`Audit fetch failed (${response.status})`);
         }
