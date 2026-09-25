@@ -267,6 +267,8 @@ function AppShell() {
           <Stack.Screen name="transaction/[id]" />
           <Stack.Screen name="escrow/[id]" />
           <Stack.Screen name="listing/[id]" />
+          <Stack.Screen name="marketplace/index" />
+          <Stack.Screen name="marketplace/[id]" />
           <Stack.Screen name="inbox" />
           {/* Debug screens are only registered in development/internal builds.
               In production builds they are absent, so any attempt to reach them

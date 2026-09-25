@@ -8,6 +8,7 @@ import {
   Post,
   Param,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min, IsArray } from "class-validator";
@@ -15,6 +16,9 @@ import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min, IsArray } from
 import { SorobanEventIndexerService, LedgerRangeResult } from "./soroban-event-indexer.service";
 import type { UnparsedSorobanEventRecord, UnparsedSorobanEventReason } from "./unparsed-soroban-event.repository";
 import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
+import { ApiKeyGuard } from "../auth/guards/api-key.guard";
+import { RequireApiKey } from "../auth/decorators/require-api-key.decorator";
+import { RequireScopes } from "../auth/decorators/require-scopes.decorator";
 
 class ReindexDto {
   @IsString()
@@ -46,10 +50,13 @@ class ReplayBatchDto {
 
 /**
  * Admin endpoint for triggering Soroban event reindexing over a ledger range.
- * Should be protected by an API-key guard in production.
+ * Every route requires a valid API key with the `admin` scope.
  */
 @ApiTags("indexer")
 @Controller("indexer")
+@UseGuards(ApiKeyGuard)
+@RequireApiKey()
+@RequireScopes("admin")
 export class SorobanIndexerController {
   private running = false;
 

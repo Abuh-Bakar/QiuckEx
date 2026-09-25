@@ -112,6 +112,7 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.buttonGroup}>
+          <NavButton href="/marketplace" label="Marketplace" />
           <NavButton href="/scan-to-pay" label={t("scanToPay")} />
           <NavButton href="/wallet-connect" label={t("connectWallet")} />
           <NavButton href="/quick-receive" label={t("quickReceive")} />

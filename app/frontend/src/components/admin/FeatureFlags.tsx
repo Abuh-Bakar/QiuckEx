@@ -40,6 +40,9 @@ export function FeatureFlags() {
         setError(null);
         const response = await fetch(`${apiBase}/admin/feature-flags`, {
           cache: "no-store",
+          headers: {
+            "x-api-key": process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "",
+          },
         });
         if (!response.ok) {
           throw new Error(`Flag fetch failed (${response.status})`);
@@ -82,6 +85,7 @@ export function FeatureFlags() {
         headers: {
           "Content-Type": "application/json",
           "x-admin-actor": "admin-dashboard",
+          "x-api-key": process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "",
         },
         body: JSON.stringify({ [field]: !flag[field] }),
       });

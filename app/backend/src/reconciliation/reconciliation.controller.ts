@@ -25,13 +25,19 @@ import { NetworkSafetyGuard } from '../feature-flags/network-safety.guard';
 import { RequiresFlag } from '../feature-flags/requires-flag.decorator';
 import { EmergencyClassification } from '../feature-flags/emergency-entrypoint-registry';
 import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { RequireApiKey } from '../auth/decorators/require-api-key.decorator';
+import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
 
 /**
  * Admin endpoints for the reconciliation worker and auto-match engine.
- * These should be protected by an API-key guard in production.
+ * Every route requires a valid API key with the `admin` scope.
  */
 @ApiTags('reconciliation')
 @Controller('reconciliation')
+@UseGuards(ApiKeyGuard)
+@RequireApiKey()
+@RequireScopes('admin')
 export class ReconciliationController {
   constructor(
     private readonly worker: ReconciliationWorkerService,
