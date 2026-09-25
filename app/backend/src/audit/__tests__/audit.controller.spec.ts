@@ -1,7 +1,6 @@
 import { AuditController } from '../audit.controller';
 import { Reflector } from '@nestjs/core';
 import { ApiKeyGuard } from '../../auth/guards/api-key.guard';
-import { RequireScopes } from '../../auth/decorators/require-scopes.decorator';
 import { REQUIRED_SCOPES_KEY } from '../../auth/decorators/require-scopes.decorator';
 
 describe('AuditController', () => {
@@ -23,7 +22,8 @@ describe('AuditController', () => {
   describe('admin routes', () => {
     for (const route of adminRoutes) {
       it(`should have ApiKeyGuard and RequireScopes('admin') on ${route.method}`, () => {
-        const method = (AuditController.prototype as any)[route.method];
+        const methodName = route.method as keyof AuditController;
+        const method = AuditController.prototype[methodName];
 
         // Check for ApiKeyGuard
         const guards = reflector.getAllAndOverride<Class[]>('__guards__', [method, AuditController]);

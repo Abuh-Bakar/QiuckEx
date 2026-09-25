@@ -1,7 +1,6 @@
 import { FeatureFlagsController } from './feature-flags.controller';
 import { Reflector } from '@nestjs/core';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
-import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
 import { REQUIRED_SCOPES_KEY } from '../auth/decorators/require-scopes.decorator';
 
 describe('FeatureFlagsController', () => {
@@ -25,7 +24,8 @@ describe('FeatureFlagsController', () => {
   describe('admin routes', () => {
     for (const route of adminRoutes) {
       it(`should have ApiKeyGuard and RequireScopes('admin') on ${route.method}`, () => {
-        const method = (FeatureFlagsController.prototype as any)[route.method];
+        const methodName = route.method as keyof FeatureFlagsController;
+        const method = FeatureFlagsController.prototype[methodName];
 
         // Check for ApiKeyGuard
         const guards = reflector.getAllAndOverride<Class[]>('__guards__', [method, FeatureFlagsController]);
@@ -41,7 +41,8 @@ describe('FeatureFlagsController', () => {
   describe('public routes', () => {
     for (const route of publicRoutes) {
       it(`should NOT have ApiKeyGuard or RequireScopes('admin') on ${route.method}`, () => {
-        const method = (FeatureFlagsController.prototype as any)[route.method];
+        const methodName = route.method as keyof FeatureFlagsController;
+        const method = FeatureFlagsController.prototype[methodName];
 
         // Check for ApiKeyGuard - should not be present (or if present, it should be from a parent class? but we override)
         const guards = reflector.getAllAndOverride<Class[]>('__guards__', [method, FeatureFlagsController]);
