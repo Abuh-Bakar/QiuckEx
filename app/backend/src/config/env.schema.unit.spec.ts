@@ -261,6 +261,55 @@ describe("OpenTelemetry tracing configuration (BE-113)", () => {
   });
 });
 
+describe("Ingestion lag health guard configuration", () => {
+  const validEnv = {
+    PORT: 4000,
+    NETWORK: "testnet",
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_ANON_KEY: "test-anon-key-12345",
+    NODE_ENV: "development",
+  };
+
+  it("defaults the ingestion lag threshold to 300 seconds", () => {
+    const { error, value } = envSchema.validate(validEnv);
+
+    expect(error).toBeUndefined();
+    expect(value.INGESTION_LAG_THRESHOLD_SECONDS).toBe(300);
+  });
+
+  it("accepts an explicit positive integer threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 900 };
+    const { error, value } = envSchema.validate(env);
+
+    expect(error).toBeUndefined();
+    expect(value.INGESTION_LAG_THRESHOLD_SECONDS).toBe(900);
+  });
+
+  it("rejects a threshold of zero", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 0 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+
+  it("rejects a negative threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: -1 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+
+  it("rejects a fractional threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 1.5 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+});
+
 it("rejects unknown environment variables when strict validation enabled", () => {
   const result = envSchema.validate(
     {
