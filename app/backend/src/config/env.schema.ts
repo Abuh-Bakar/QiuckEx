@@ -577,6 +577,15 @@ export const envSchema = Joi.object({
     .default(false)
     .description("Admin override to disable lag guard temporarily (for emergencies)"),
 
+  // ── Ingestion Lag Health Guard ─────────────────────────────────────────────
+  INGESTION_LAG_THRESHOLD_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .default(300)
+    .description(
+      "Maximum allowed age of the newest ingestion cursor in seconds before /ready reports degraded",
+    ),
+
   // ── Dead Letter Queue Monitor ────────────────────────────────────────────
   DLQ_MONITOR_ENABLED: Joi.boolean()
     .default(true)
@@ -832,6 +841,7 @@ export interface EnvConfig {
   INDEXER_LAG_THRESHOLD_LEDGERS: number;
   INDEXER_LAG_GUARD_ENABLED: boolean;
   INDEXER_LAG_GUARD_OVERRIDE: boolean;
+  INGESTION_LAG_THRESHOLD_SECONDS: number;
   DLQ_MONITOR_ENABLED: boolean;
   DLQ_ALERT_DEPTH_THRESHOLD: number;
   DLQ_ALERT_AGE_THRESHOLD_MS: number;
