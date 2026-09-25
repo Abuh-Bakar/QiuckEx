@@ -373,6 +373,16 @@ export class AppConfigService {
   }
 
   /**
+   * Maximum allowed age of the newest ingestion cursor, in seconds, before the
+   * health check reports the ingestion pipeline as degraded.
+   */
+  get ingestionLagThresholdSeconds(): number {
+    return this.configService.get("INGESTION_LAG_THRESHOLD_SECONDS", {
+      infer: true,
+    });
+  }
+
+  /**
    * Whether the dead letter queue depth/age monitor is enabled
    */
   get dlqMonitorEnabled(): boolean {
