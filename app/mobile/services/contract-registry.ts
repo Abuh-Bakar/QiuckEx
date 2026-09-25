@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ContractEntry } from '../types/runtime-config';
 
 const CACHE_KEY = '@contract_registry';
 export const REGISTRY_CACHE_TTL_MS = 1000 * 60 * 60 * 24; // 24 hours
@@ -40,6 +41,8 @@ interface ContractRegistryCache {
   data: ContractRegistry;
 }
 
+let memoryRegistry: ContractRegistry | null = null;
+
 function isContractRegistryEnvelope(value: unknown): value is ContractRegistryEnvelope {
   return (
     typeof value === 'object' &&
@@ -67,6 +70,7 @@ export const ContractRegistryService = {
 
       const data = body.data;
       const timestamp = Date.now();
+      memoryRegistry = data;
       await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
         timestamp,
         data
@@ -81,6 +85,7 @@ export const ContractRegistryService = {
       const cached = await AsyncStorage.getItem(CACHE_KEY);
       if (cached) {
         const parsed = JSON.parse(cached) as ContractRegistryCache;
+        memoryRegistry = parsed.data;
         // Serve stale cache if offline or backend returned bad data
         return {
           registry: parsed.data,
@@ -94,11 +99,74 @@ export const ContractRegistryService = {
     }
   },
 
+  async populateFromBootstrap(
+    contracts: ContractEntry[],
+    networkPassphrase?: string,
+  ): Promise<ContractRegistry> {
+    const registry: ContractRegistry = {};
+    for (const c of contracts) {
+      registry[c.contractId] = {
+        id: c.address,
+        wasmHash: '',
+        version: c.version ? parseInt(c.version, 10) || 1 : 1,
+        schemaVersion: c.version ?? '1.0.0',
+        schemaCompatibility: { min: '1.0.0', max: '2.0.0' },
+        networkPassphrase: networkPassphrase ?? '',
+        updatedAt: c.deployedAt ?? new Date().toISOString(),
+        metadata: { address: c.address, version: c.version },
+      };
+    }
+    memoryRegistry = registry;
+    await AsyncStorage.setItem(
+      CACHE_KEY,
+      JSON.stringify({
+        timestamp: Date.now(),
+        data: registry,
+      }),
+    );
+    return registry;
+  },
+
   async getContract(name: string): Promise<string> {
+    if (memoryRegistry && memoryRegistry[name]) {
+      return memoryRegistry[name].id;
+    }
     const cached = await AsyncStorage.getItem(CACHE_KEY);
     if (!cached) throw new Error('Registry missing');
     const registry = JSON.parse(cached).data;
     if (!registry[name]) throw new Error(`Contract ${name} missing from registry`);
     return registry[name].id;
-  }
+  },
+
+  async getContractEntry(name: string): Promise<ContractRegistryEntry | null> {
+    if (memoryRegistry && memoryRegistry[name]) {
+      return memoryRegistry[name];
+    }
+    const cached = await AsyncStorage.getItem(CACHE_KEY);
+    if (!cached) return null;
+    try {
+      const registry = JSON.parse(cached).data;
+      return registry[name] ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async getAllContracts(): Promise<ContractRegistry> {
+    if (memoryRegistry) {
+      return memoryRegistry;
+    }
+    const cached = await AsyncStorage.getItem(CACHE_KEY);
+    if (!cached) return {};
+    try {
+      const registry = JSON.parse(cached).data;
+      return registry ?? {};
+    } catch {
+      return {};
+    }
+  },
+
+  clearMemoryCache(): void {
+    memoryRegistry = null;
+  },
 };
