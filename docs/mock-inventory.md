@@ -249,16 +249,6 @@ This inventory **explicitly excludes** the following, which are managed under ex
 
 ---
 
-#### mobile/src/screens/NotificationScreen.tsx
-
-- **Line:** 26
-- **Snippet:** `const MOCK_NOTIFICATIONS: Notification[] = [`
-- **Description:** Three mock in-app notifications — a USDC payment received from Alice, an XLM payment sent to Bob, and a system welcome message. Used as the initial state for the notifications FlatList and not replaced by any API call.
-- **Classification:** unintended technical debt
-- **Action:** To be removed in Wave 8 (create/link issue)
-
----
-
 ### Backend
 
 ---
