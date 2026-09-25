@@ -7,13 +7,12 @@
  * Requirements: 9.2
  */
 
-import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
-import { JobQueueService } from '../job-queue/job-queue.service';
-import { JobType } from '../job-queue/types';
-import { ExportGenerationPayload } from '../job-queue/types/job-payloads.types';
 import { RequestExportDto } from './dto/request-export.dto';
+import { ExportStatusDto } from './dto/export-status.dto';
+import { ExportsService } from './exports.service';
 
 /**
  * Exports Controller
@@ -25,11 +24,7 @@ import { RequestExportDto } from './dto/request-export.dto';
 @UseGuards(ApiKeyGuard)
 @Controller('exports')
 export class ExportsController {
-  private readonly logger = new Logger(ExportsController.name);
-
-  constructor(
-    private readonly jobQueueService: JobQueueService,
-  ) {}
+  constructor(private readonly exportsService: ExportsService) {}
 
   /**
    * Request a data export
@@ -60,30 +55,14 @@ export class ExportsController {
     description: 'Invalid request parameters',
   })
   async requestExport(@Body() dto: RequestExportDto): Promise<{ jobId: string; message: string }> {
-    this.logger.log(
-      `Export requested: userId=${dto.userId}, type=${dto.exportType}, format=${dto.format}, delivery=${dto.deliveryMethod}`,
-    );
+    return this.exportsService.requestExport(dto);
+  }
 
-    // Build payload for export_generation job
-    const payload: ExportGenerationPayload = {
-      userId: dto.userId,
-      exportType: dto.exportType,
-      filters: dto.filters || {},
-      format: dto.format,
-      deliveryMethod: dto.deliveryMethod,
-    };
-
-    // Enqueue export_generation job
-    const jobId = await this.jobQueueService.enqueue(
-      JobType.EXPORT_GENERATION,
-      payload,
-    );
-
-    this.logger.log(`Export job enqueued: ${jobId}`);
-
-    return {
-      jobId,
-      message: `Export job enqueued successfully. Job ID: ${jobId}`,
-    };
+  @Get(':id/status')
+  @ApiOperation({ summary: 'Get export status' })
+  @ApiResponse({ status: 200, type: ExportStatusDto })
+  @ApiResponse({ status: 404, description: 'Export not found' })
+  async getStatus(@Param('id') id: string): Promise<ExportStatusDto> {
+    return this.exportsService.getStatus(id);
   }
 }
