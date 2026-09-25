@@ -3,6 +3,8 @@ import { Module, forwardRef } from "@nestjs/common";
 import { SupabaseModule } from "../supabase/supabase.module";
 import { JobQueueModule } from "../job-queue/job-queue.module";
 import { MetricsModule } from "../metrics/metrics.module";
+import { ContractsModule } from "../contracts/contracts.module";
+import { ApiKeysModule } from "../api-keys/api-keys.module";
 import { CursorRepository } from "./cursor.repository";
 import { EscrowEventRepository } from "./escrow-event.repository";
 import { PrivacyEventRepository } from "./privacy-event.repository";
@@ -21,6 +23,8 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     SupabaseModule,
     forwardRef(() => JobQueueModule),
     MetricsModule,
+    ContractsModule,
+    ApiKeysModule,
   ],
   controllers: [SorobanIndexerController],
   providers: [
@@ -43,6 +47,7 @@ import { IngestionBootstrapService } from "./ingestion-bootstrap.service";
     CursorRepository,
     EscrowEventRepository,
     UnparsedSorobanEventRepository,
+    IndexerCheckpointRepository,
   ],
 })
 export class IngestionModule {}

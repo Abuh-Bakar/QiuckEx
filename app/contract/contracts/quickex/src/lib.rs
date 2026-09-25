@@ -4,10 +4,24 @@ use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, V
 
 mod admin;
 #[cfg(test)]
+mod admin_transfer_test;
+#[cfg(test)]
+mod assert_helpers;
+pub mod batch;
+#[cfg(test)]
+mod batch_test;
+#[cfg(test)]
 mod bench_test;
 mod commitment;
 #[cfg(test)]
 mod commitment_test;
+#[cfg(test)]
+mod coverage_test;
+mod dispute_quorum;
+#[cfg(test)]
+mod dispute_quorum_test;
+#[cfg(test)]
+mod error_codes_test;
 mod errors;
 mod escrow;
 mod escrow_id;
@@ -21,20 +35,37 @@ mod fee_router_test;
 #[cfg(test)]
 mod fee_test;
 #[cfg(test)]
+mod fee_treasury_test;
+#[cfg(test)]
 mod fuzz_test;
-mod hook;
+pub mod hook;
+#[cfg(test)]
+mod hook_failure_events_test;
+#[cfg(test)]
+mod hook_reentrancy_test;
+#[cfg(test)]
+mod hook_reference_test;
 #[cfg(test)]
 mod metadata_test;
+mod migration;
 pub mod nonce;
 #[cfg(test)]
 mod nonce_test;
 mod oracle;
+#[cfg(test)]
+mod oracle_aggregation_test;
+#[cfg(test)]
+mod oracle_test;
 mod pause_policy;
 #[cfg(test)]
 mod pause_policy_test;
 mod privacy;
 #[cfg(test)]
+mod receipt_reference_test;
+#[cfg(test)]
 mod role_test;
+#[cfg(test)]
+mod smoke_test;
 mod stealth;
 #[cfg(test)]
 mod stealth_test;
@@ -45,7 +76,10 @@ mod storage_test;
 mod test;
 #[cfg(test)]
 mod test_context;
-mod types;
+mod ttl_policy;
+#[cfg(test)]
+mod ttl_policy_test;
+pub mod types;
 #[cfg(test)]
 mod upgrade_test;
 
@@ -53,8 +87,9 @@ use errors::QuickexError;
 use pause_policy::{EntryPoint, PauseChangeReason};
 use storage::*;
 use types::{
-    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, OracleFeeConfig, PerAssetFeeConfig,
-    PrivacyAwareEscrowView, Role, StealthDepositParams,
+    DeploymentMetadata, EscrowEntry, EscrowStatus, FeeConfig, OracleAggregationConfig,
+    OracleFeeConfig, PendingAdminProposal, PerAssetFeeConfig, PrivacyAwareEscrowView, Role,
+    StealthDepositParams,
 };
 
 /// QuickEx Privacy Contract
@@ -125,67 +160,38 @@ impl QuickexContract {
         escrow::withdraw(&env, amount, to, salt, nonce, valid_until)
     }
 
-    /// Set a numeric privacy level for an account (legacy/level-based API).
-    ///
-    /// Records the level in storage and appends it to the account's privacy history.
-    /// For boolean on/off privacy, prefer [`set_privacy`](QuickexContract::set_privacy).
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `account` - The account to configure
-    /// * `privacy_level` - Numeric level (0 = off, higher = more privacy; interpretation is application-specific)
-    pub fn enable_privacy(env: Env, account: Address, privacy_level: u32) -> bool {
-        set_privacy_level(&env, &account, privacy_level);
-        add_privacy_history(&env, &account, privacy_level);
-        true
+    /// Deprecated numeric-level shim (`0`/`1`) over `set_privacy`; same auth,
+    /// idempotency error, and event, so the two styles can never disagree.
+    pub fn enable_privacy(
+        env: Env,
+        account: Address,
+        privacy_level: u32,
+    ) -> Result<bool, QuickexError> {
+        admin::require_initialized(&env)?;
+        pause_policy::require_entry_allowed(&env, EntryPoint::SetPrivacy)?;
+        privacy::enable_privacy(&env, account, privacy_level)
     }
 
-    /// Get the current numeric privacy level for an account.
-    ///
-    /// Returns `None` if no level has been set.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `account` - The account to query
+    /// Deprecated shim: canonical privacy state projected into `Option<{0, 1}>`
+    /// (`None` if never touched). Can never disagree with `get_privacy`.
     pub fn privacy_status(env: Env, account: Address) -> Option<u32> {
-        get_privacy_level(&env, &account)
+        privacy::privacy_status(&env, account)
     }
 
-    /// Get the history of privacy level changes for an account.
-    ///
-    /// Returns a vector of levels in chronological order (oldest first).
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `account` - The account to query
+    /// Deprecated audit history of levels requested via `enable_privacy`,
+    /// newest first. Purely additive; not authoritative.
     pub fn privacy_history(env: Env, account: Address) -> Vec<u32> {
-        get_privacy_history(&env, &account)
+        privacy::privacy_history(&env, account)
     }
 
-    /// Enable or disable privacy for an account.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `owner` - The account address to configure
-    /// * `enabled` - `true` to enable privacy, `false` to disable
-    ///
-    /// # Errors
-    /// * `ContractPaused` - Contract is currently paused
-    /// * `PrivacyAlreadySet` - Privacy state is already at the requested value
+    /// Enable or disable privacy for an account (canonical API).
     pub fn set_privacy(env: Env, owner: Address, enabled: bool) -> Result<(), QuickexError> {
         admin::require_initialized(&env)?;
         pause_policy::require_entry_allowed(&env, EntryPoint::SetPrivacy)?;
         privacy::set_privacy(&env, owner, enabled)
     }
 
-    /// Check the current privacy status of an account
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `owner` - The account address to query
-    ///
-    /// # Returns
-    /// * `bool` - Current privacy status (true = enabled)
+    /// Current privacy status of an account (canonical API).
     pub fn get_privacy(env: Env, owner: Address) -> bool {
         privacy::get_privacy(&env, owner)
     }
@@ -327,20 +333,6 @@ impl QuickexContract {
         salt: Bytes,
     ) -> bool {
         commitment::verify_amount_commitment(&env, commitment, owner, amount, salt)
-    }
-
-    /// Create an escrow record and increment the global escrow counter.
-    ///
-    /// Returns the new counter value. Parameters `_from`, `_to`, `_amount` are reserved for
-    /// future use; the implementation only increments the counter.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `_from` - Reserved (depositor address for future use)
-    /// * `_to` - Reserved (recipient address for future use)
-    /// * `_amount` - Reserved (amount for future use)
-    pub fn create_escrow(env: Env, _from: Address, _to: Address, _amount: u64) -> u64 {
-        increment_escrow_counter(&env)
     }
 
     /// Health check for deployment and monitoring.
@@ -589,16 +581,88 @@ impl QuickexContract {
     pub fn cleanup_escrow(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
         admin::require_initialized(&env)?;
         pause_policy::require_entry_allowed(&env, EntryPoint::CleanupEscrow)?;
+        hook::assert_not_reentrant(&env)?;
         escrow::cleanup_escrow(&env, commitment)
+    }
+
+    /// Automatically finalize an expired escrow by refunding to the owner.
+    ///
+    /// This function enables deterministic timeout-based refund finalization so
+    /// expired flows can resolve cleanly on testnet without manual intervention.
+    /// Any caller can invoke this function once the escrow has expired.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitment` - 32-byte commitment hash identifying the escrow
+    ///
+    /// # Errors
+    /// * `CommitmentNotFound` - No escrow exists for the commitment
+    /// * `AlreadySpent` - Escrow is already in a terminal state
+    /// * `EscrowNotExpired` - Escrow has no expiry or has not yet expired
+    /// * `InvalidDisputeState` - Escrow is disputed, funds are locked
+    pub fn finalize_expired_escrow(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+        pause_policy::require_entry_allowed(&env, EntryPoint::Refund)?;
+        hook::assert_not_reentrant(&env)?;
+        escrow::finalize_expired_escrow(&env, commitment)
     }
 
     /// Extend the storage TTL of an escrow record.
     ///
-    /// Any user can call this to keep an escrow from being archived.
+    /// Bumps the entry's TTL to the currently configured policy value
+    /// (see `set_ttl_config`).  Any user can call this to prevent an escrow
+    /// from being archived by the network.
+    ///
+    /// # Errors
+    /// - `EscrowArchived` – the entry is not in live storage; it may have been
+    ///   archived.  Submit a `RestoreFootprint` transaction off-chain for the
+    ///   commitment key, then call `restore_archived_escrow`.
     pub fn extend_escrow_ttl(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
         admin::require_initialized(&env)?;
         pause_policy::require_entry_allowed(&env, EntryPoint::ExtendEscrowTtl)?;
-        escrow::extend_escrow_ttl(&env, commitment)
+        ttl_policy::extend_ttl_or_archived(&env, commitment)
+    }
+
+    /// Re-anchor an escrow entry that was archived and has been restored off-chain.
+    ///
+    /// ## Recovery flow
+    ///
+    /// 1. An operation (or `extend_escrow_ttl`) returned `EscrowArchived`.
+    /// 2. Off-chain: construct and submit a `RestoreFootprint` transaction for
+    ///    `DataKey::EscrowCore(commitment_bytes)`.
+    /// 3. Once confirmed, call this function.  It verifies the entry is live
+    ///    and re-bumps its TTL to the full configured policy value (threshold=0
+    ///    so the bump is unconditional).
+    /// 4. All subsequent operations (withdraw, refund, dispute, etc.) will work
+    ///    normally until the TTL would expire again.
+    ///
+    /// # Errors
+    /// - `EscrowArchived` – the entry is still not in live storage; the restore
+    ///   transaction may not have been confirmed yet.
+    pub fn restore_archived_escrow(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+        admin::require_initialized(&env)?;
+        ttl_policy::restore_archived_escrow(&env, commitment)
+    }
+
+    /// Get the current TTL policy configuration (read-only).
+    pub fn get_ttl_config(env: Env) -> ttl_policy::TtlConfig {
+        ttl_policy::get_ttl_config(&env)
+    }
+
+    /// Set the TTL policy for escrow entries (**Admin only**).
+    ///
+    /// The new `config` must satisfy `MIN_TTL_LEDGERS ≤ threshold ≤ ttl ≤ MAX_TTL_LEDGERS`.
+    ///
+    /// # Errors
+    /// - `TtlOutOfBounds` – `ttl` or `threshold` violates hard bounds.
+    /// - `InsufficientRole` – caller is not admin.
+    pub fn set_ttl_config(
+        env: Env,
+        caller: Address,
+        config: ttl_policy::TtlConfig,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_admin(&env, &caller)?;
+        ttl_policy::set_ttl_config(&env, config)
     }
 
     /// Initiate a dispute for a pending escrow, locking the funds.
@@ -676,20 +740,8 @@ impl QuickexContract {
 
     /// Cast a vote on a disputed escrow (multi-sig mode).
     ///
-    /// Only callable by one of the assigned arbiters. Each arbiter can vote once.
-    /// When the threshold is reached, anyone can call `resolve_dispute_multi_sig`.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `caller` - The arbiter casting the vote (must authorize)
-    /// * `commitment` - 32-byte commitment hash identifying the escrow
-    /// * `resolve_for_owner` - If true, voting to refund to owner; if false, voting to pay recipient
-    ///
-    /// # Errors
-    /// * `CommitmentNotFound` - No escrow exists for the commitment
-    /// * `InvalidDisputeState` - Escrow is not in `Disputed` status
-    /// * `NotAnArbiter` - Caller is not one of the assigned arbiters
-    /// * `ArbiterAlreadyVoted` - Caller has already voted on this dispute
+    /// Only an assigned arbiter may vote, once, before the dispute's frozen
+    /// quorum deadline; a vote also goes stale after that same window.
     pub fn vote_for_dispute(
         env: Env,
         caller: Address,
@@ -710,20 +762,8 @@ impl QuickexContract {
         )
     }
 
-    /// Resolve a disputed escrow using multi-sig arbitration.
-    ///
-    /// Can be called by anyone once the threshold is met. The outcome is determined
-    /// by majority vote among the votes cast.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `commitment` - 32-byte commitment hash identifying the escrow
-    /// * `recipient` - Address to receive funds when resolving for recipient
-    ///
-    /// # Errors
-    /// * `CommitmentNotFound` - No escrow exists for the commitment
-    /// * `InvalidDisputeState` - Escrow is not in `Disputed` status
-    /// * `InsufficientVotes` - Threshold has not been reached yet
+    /// Resolve a disputed escrow by multi-sig majority once quorum is met
+    /// with fresh votes. See `resolve_dispute_timeout` for the fallback.
     pub fn resolve_dispute_multi_sig(
         env: Env,
         commitment: BytesN<32>,
@@ -732,6 +772,32 @@ impl QuickexContract {
         pause_policy::require_entry_allowed(&env, EntryPoint::ResolveDisputeMultiSig)?;
         hook::assert_not_reentrant(&env)?;
         escrow::resolve_dispute_multi_sig(&env, commitment, recipient)
+    }
+
+    /// Fallback once a multi-sig dispute's deadline passes with quorum still
+    /// unmet: refunds the owner so funds can't stay stuck indefinitely.
+    pub fn resolve_dispute_timeout(env: Env, commitment: BytesN<32>) -> Result<(), QuickexError> {
+        pause_policy::require_entry_allowed(&env, EntryPoint::ResolveDisputeMultiSig)?;
+        hook::assert_not_reentrant(&env)?;
+        escrow::resolve_dispute_timeout(&env, commitment)
+    }
+
+    /// Current dispute-quorum policy (read-only). See `dispute_quorum` module docs.
+    pub fn get_dispute_quorum_config(env: Env) -> dispute_quorum::DisputeQuorumConfig {
+        dispute_quorum::get_quorum_config(&env)
+    }
+
+    /// Set the dispute-quorum policy (**Admin only**). Only affects disputes
+    /// opened after this call; an in-flight dispute's quorum/deadline were
+    /// already frozen when it opened.
+    pub fn set_dispute_quorum_config(
+        env: Env,
+        caller: Address,
+        config: dispute_quorum::DisputeQuorumConfig,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_admin(&env, &caller)?;
+        dispute_quorum::set_quorum_config(&env, config)
     }
 
     /// Initialize the contract with an admin address (one-time only).
@@ -894,20 +960,65 @@ impl QuickexContract {
         )
     }
 
-    /// Transfer admin rights to a new address (**Admin only**).
+    /// Propose a new admin, subject to a timelock (**Admin only**, Issue #870).
     ///
-    /// Caller must equal the current admin. The new admin can later transfer again.
+    /// This is the only way to change the admin address — there is no
+    /// instant, single-call transfer. A compromised admin key can propose a
+    /// takeover, but cannot complete one before `delay_secs` elapses, and
+    /// the legitimate admin can `cancel_admin_transfer` during that window.
+    ///
+    /// Overwrites any existing pending proposal. `delay_secs` must be at least
+    /// the contract-wide minimum delay; shorter values are rejected.
     ///
     /// # Arguments
     /// * `env` - The contract environment
-    /// * `caller` - Caller address (must equal current admin)
-    /// * `new_admin` - New admin address
+    /// * `caller` - Caller address (must be admin)
+    /// * `new_admin` - Address proposed to become the new admin
+    /// * `delay_secs` - Timelock duration in seconds before `accept_admin_transfer` is callable
     ///
     /// # Errors
-    /// * `Unauthorized` - Caller is not the admin, or admin not set
-    pub fn set_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), QuickexError> {
+    /// * `InsufficientRole` - Caller is not admin
+    /// * `InvalidTimeout` - `delay_secs` is below the minimum allowed delay
+    pub fn propose_admin_transfer(
+        env: Env,
+        caller: Address,
+        new_admin: Address,
+        delay_secs: u64,
+    ) -> Result<(), QuickexError> {
         pause_policy::require_admin_entry_allowed(&env)?;
-        admin::set_admin(&env, caller, new_admin)
+        admin::propose_admin_transfer(&env, caller, new_admin, delay_secs)
+    }
+
+    /// Accept a pending, timelocked admin-transfer proposal (Issue #870).
+    ///
+    /// Must be called by the exact address named in the proposal, and only
+    /// after the proposal's timelock has elapsed. Performs the same
+    /// admin/role handover in a single atomic step and clears the proposal.
+    ///
+    /// # Errors
+    /// * `NoPendingAdminProposal` - No proposal is currently pending
+    /// * `InvalidAcceptor` - Caller does not match the proposed admin
+    /// * `AdminTimelockNotElapsed` - The configured delay has not yet passed
+    pub fn accept_admin_transfer(env: Env, caller: Address) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::accept_admin_transfer(&env, caller)
+    }
+
+    /// Cancel a pending admin-transfer proposal (**Admin only**, Issue #870).
+    ///
+    /// May be called by any current admin, not just the original proposer.
+    ///
+    /// # Errors
+    /// * `InsufficientRole` - Caller is not admin
+    /// * `NoPendingAdminProposal` - No proposal is currently pending
+    pub fn cancel_admin_transfer(env: Env, caller: Address) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::cancel_admin_transfer(&env, caller)
+    }
+
+    /// Get the currently pending admin-transfer proposal, if any (Issue #870).
+    pub fn get_pending_admin_transfer(env: Env) -> Option<PendingAdminProposal> {
+        admin::get_pending_admin_transfer(&env)
     }
 
     /// Check if the contract is currently paused.
@@ -960,6 +1071,23 @@ impl QuickexContract {
         hook::get_registered_hooks(&env)
     }
 
+    /// Set whether a hook contract is allowed to be registered (**Admin only**).
+    pub fn set_hook_allowed(
+        env: Env,
+        caller: Address,
+        hook_contract: Address,
+        allowed: bool,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        hook::assert_not_reentrant(&env)?;
+        admin::set_hook_allowed(&env, &caller, hook_contract, allowed)
+    }
+
+    /// Check if a hook contract is allowed.
+    pub fn is_hook_allowed(env: Env, hook_contract: Address) -> bool {
+        storage::is_hook_allowed(&env, &hook_contract)
+    }
+
     /// Set the fee configuration (**Admin only**).
     pub fn set_fee_config(
         env: Env,
@@ -1004,6 +1132,110 @@ impl QuickexContract {
         oracle::get_oracle_fee_config(&env)
     }
 
+    /// Record a new oracle price in the contract cache (**Admin or Operator only**).
+    ///
+    /// Updates the cached price and timestamp, enabling dynamic fee calculation
+    /// when the price is within the configured staleness threshold.
+    ///
+    /// # Errors
+    /// * `OraclePriceInvalid` - Price is zero or negative
+    pub fn record_oracle_price(
+        env: Env,
+        caller: Address,
+        price_micros: i128,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_any_role(&env, &caller, &[Role::Admin, Role::Operator])?;
+        oracle::record_price(&env, price_micros)
+    }
+
+    // -- Multi-source oracle aggregation (SC-W8-06 / Issue #867) --
+
+    /// Register a trusted oracle source address (**Admin or Operator only**).
+    ///
+    /// Once at least one source is registered, fee calculation switches
+    /// from the legacy single cached price to the median of registered
+    /// sources' own prices (see [`Self::get_aggregated_oracle_price`]).
+    ///
+    /// # Errors
+    /// * `OracleSourceAlreadyRegistered` - `source` is already registered
+    pub fn register_oracle_source(
+        env: Env,
+        caller: Address,
+        source: Address,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_any_role(&env, &caller, &[Role::Admin, Role::Operator])?;
+        oracle::register_source(&env, source)
+    }
+
+    /// Unregister an oracle source address (**Admin or Operator only**).
+    ///
+    /// # Errors
+    /// * `OracleSourceNotRegistered` - `source` is not registered
+    pub fn unregister_oracle_source(
+        env: Env,
+        caller: Address,
+        source: Address,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_any_role(&env, &caller, &[Role::Admin, Role::Operator])?;
+        oracle::unregister_source(&env, source)
+    }
+
+    /// List the currently-registered oracle source addresses (read-only).
+    pub fn get_oracle_sources(env: Env) -> Vec<Address> {
+        oracle::get_sources(&env)
+    }
+
+    /// Configure the multi-source aggregation policy (**Admin or Operator only**).
+    ///
+    /// # Errors
+    /// * `InvalidAmount` - `min_sources` is 0, or `max_deviation_bps` exceeds 10_000 (100%)
+    pub fn set_oracle_aggregation_config(
+        env: Env,
+        caller: Address,
+        min_sources: u32,
+        max_deviation_bps: u32,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        admin::require_any_role(&env, &caller, &[Role::Admin, Role::Operator])?;
+        oracle::set_aggregation_config(&env, min_sources, max_deviation_bps)
+    }
+
+    /// Get the current multi-source aggregation policy (read-only).
+    pub fn get_oracle_aggregation_config(env: Env) -> OracleAggregationConfig {
+        oracle::get_aggregation_config(&env)
+    }
+
+    /// Record a fresh price from a registered oracle source.
+    ///
+    /// `source` must authorize the call itself; an Admin/Operator role does
+    /// **not** substitute for the source's own signature, so a single
+    /// compromised admin key cannot forge every source's price at once.
+    ///
+    /// # Errors
+    /// * `OracleSourceNotRegistered` - `source` is not registered
+    /// * `OraclePriceInvalid` - Price is zero or negative
+    pub fn record_oracle_source_price(
+        env: Env,
+        source: Address,
+        price_micros: i128,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_admin_entry_allowed(&env)?;
+        oracle::record_source_price(&env, &source, price_micros)
+    }
+
+    /// Get the aggregated multi-source oracle price: the median of fresh,
+    /// non-outlier registered sources.
+    ///
+    /// # Errors
+    /// * `OraclePriceUnavailable` - No oracle fee config is set (needed for the staleness threshold)
+    /// * `OracleInsufficientSources` - Fewer than the configured minimum fresh, non-outlier sources
+    pub fn get_aggregated_oracle_price(env: Env) -> Result<(i128, u64), QuickexError> {
+        oracle::fetch_aggregated_price(&env)
+    }
+
     /// Get the platform wallet address (read-only).
     pub fn get_platform_wallet(env: Env) -> Option<Address> {
         storage::get_platform_wallet(&env)
@@ -1036,6 +1268,26 @@ impl QuickexContract {
         fee_router::active_collector(&env)
     }
 
+    /// Accrued, admin-withdrawable protocol fee balance for `token` (read-only).
+    /// Never includes escrowed principal.
+    pub fn get_accrued_fee_balance(env: Env, token: Address) -> i128 {
+        storage::get_accrued_fee_balance(&env, &token)
+    }
+
+    /// Withdraw accrued protocol fees for `token` to `recipient` (**Admin only**).
+    /// Can never touch escrowed principal, which is never credited to the ledger.
+    pub fn withdraw_fees(
+        env: Env,
+        caller: Address,
+        token: Address,
+        amount: i128,
+        recipient: Address,
+    ) -> Result<(), QuickexError> {
+        pause_policy::require_entry_allowed(&env, EntryPoint::WithdrawFees)?;
+        hook::assert_not_reentrant(&env)?;
+        admin::withdraw_fees(&env, &caller, token, amount, recipient)
+    }
+
     /// Get the status of an escrow by its commitment hash (read-only).
     ///
     /// Returns `Pending`, `Spent`, `Expired`, or `Refunded` if an escrow exists; `None` otherwise.
@@ -1047,6 +1299,22 @@ impl QuickexContract {
         let commitment_bytes: Bytes = commitment.into();
         let entry: Option<EscrowEntry> = get_escrow(&env, &commitment_bytes);
         entry.map(|e| e.status)
+    }
+
+    /// Check whether an escrow is currently eligible for `finalize_expired_escrow`,
+    /// without submitting a state-changing transaction (read-only).
+    ///
+    /// Intended for keepers/dapps to poll before calling `finalize_expired_escrow`,
+    /// and for indexers reconstructing refund availability off-chain.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `commitment` - 32-byte commitment hash identifying the escrow
+    ///
+    /// # Errors
+    /// * `CommitmentNotFound` - No escrow exists for the commitment
+    pub fn is_refund_eligible(env: Env, commitment: BytesN<32>) -> Result<bool, QuickexError> {
+        escrow::is_refund_eligible(&env, commitment)
     }
 
     /// Verify withdrawal parameters without submitting a transaction (read-only).
@@ -1206,6 +1474,7 @@ impl QuickexContract {
         valid_until: u64,
     ) -> Result<bool, QuickexError> {
         pause_policy::require_entry_allowed(&env, EntryPoint::StealthWithdraw)?;
+        hook::assert_not_reentrant(&env)?;
         stealth::stealth_withdraw(
             &env,
             recipient,

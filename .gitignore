@@ -76,6 +76,7 @@ reports/*
 kp.json
 .turbo/
 .claude/
+.trae/
 local-commit-pr-notes.md
 feat/be-release-pipeline
 .turbo
@@ -86,3 +87,13 @@ commit_*.sh
 
 main
 .opencode
+
+# Secret scanning
+# The .secrets.baseline IS committed (it tracks audited false-positives).
+# Temporary scan outputs and gitleaks reports are ignored.
+.secrets.baseline.new
+.gitleaks-report.json
+
+# Local tools
+.tools/
+

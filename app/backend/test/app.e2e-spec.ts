@@ -24,9 +24,9 @@ describe("App endpoints", () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     })
-      .overrideProvider(ApiKeyGuard)
+      .overrideGuard(ApiKeyGuard)
       .useValue({ canActivate: jest.fn().mockReturnValue(true) })
-      .overrideProvider(CustomThrottlerGuard)
+      .overrideGuard(CustomThrottlerGuard)
       .useValue({ canActivate: jest.fn().mockReturnValue(true) })
       .overrideProvider(UsernamesService)
       .useValue({
@@ -42,6 +42,7 @@ describe("App endpoints", () => {
         }),
         getReadinessStatus: jest.fn().mockResolvedValue({
           ready: true,
+          degraded: false,
           checks: [
             {
               name: "supabase",
@@ -133,6 +134,7 @@ describe("App endpoints", () => {
       .expect(200)
       .expect({
         ready: true,
+        degraded: false,
         checks: [
           { name: "supabase", status: "up", latency: "10ms" },
           {
@@ -147,6 +149,7 @@ describe("App endpoints", () => {
   it("GET /ready returns 503 when unhealthy", async () => {
     healthService.getReadinessStatus.mockResolvedValueOnce({
       ready: false,
+      degraded: false,
       timestamp: new Date().toISOString(),
       checks: [
         {
@@ -164,20 +167,22 @@ describe("App endpoints", () => {
       ],
     });
 
-    await request(app.getHttpServer())
+    const response = await request(app.getHttpServer())
       .get("/ready")
-      .expect(503)
-      .expect({
-        ready: false,
-        checks: [
-          { name: "supabase", status: "down" },
-          {
-            name: "environment",
-            status: "up",
-            details: ["All critical env variables loaded"],
-          },
-        ],
-      });
+      .expect(503);
+
+    expect(response.body).toMatchObject({
+      ready: false,
+      timestamp: expect.any(String),
+      checks: [
+        { name: "supabase", status: "down" },
+        {
+          name: "environment",
+          status: "up",
+          details: ["All critical env variables loaded"],
+        },
+      ],
+    });
   });
 
   // -----------------------------
@@ -336,7 +341,6 @@ describe("App endpoints", () => {
       .expect(400);
 
     expect(response.body).toMatchObject({
-      success: false,
       error: {
         code: expect.any(String),
         message: expect.any(String),

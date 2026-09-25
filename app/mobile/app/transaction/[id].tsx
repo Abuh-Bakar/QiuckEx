@@ -271,34 +271,39 @@ export default function TransactionDetailScreen() {
     }, [hasFullParams, params.id]);
 
     // Build the effective transaction object
-    const tx: TransactionItem = useMemo(() => {
+    const tx: TransactionItem | null = useMemo(() => {
         if (transaction) return transaction;
-        return {
-            amount: params.amount ?? '0',
-            asset: params.asset ?? 'XLM',
-            memo: params.memo,
-            timestamp: params.timestamp ?? new Date().toISOString(),
-            txHash: params.txHash ?? params.id,
-            pagingToken: params.id,
-            source: params.source ?? '',
-            destination: params.destination ?? '',
-            status: (params.status as 'Success' | 'Pending') ?? 'Success',
-        };
-    }, [transaction, params]);
+        if (hasFullParams) {
+            return {
+                amount: params.amount ?? '0',
+                asset: params.asset ?? 'XLM',
+                memo: params.memo,
+                timestamp: params.timestamp ?? new Date().toISOString(),
+                txHash: params.txHash ?? params.id,
+                pagingToken: params.id,
+                source: params.source ?? '',
+                destination: params.destination ?? '',
+                status: (params.status as 'Success' | 'Pending') ?? 'Success',
+            };
+        }
+        return null;
+    }, [transaction, params, hasFullParams]);
 
-    const assetLabel = formatAsset(tx.asset);
+    const assetLabel = formatAsset(tx?.asset);
     const formattedAmount = useMemo(() => {
+        if (!tx) return '0.00';
         const num = parseFloat(tx.amount || '0');
         return Number.isNaN(num) ? '0.00' : num.toFixed(2);
-    }, [tx.amount]);
+    }, [tx?.amount]);
 
     const timelineSteps = useMemo(
-        () => buildTimelineSteps(tx.timestamp, tx.status),
-        [tx.timestamp, tx.status],
+        () => tx ? buildTimelineSteps(tx.timestamp, tx.status) : [],
+        [tx?.timestamp, tx?.status],
     );
-    const receiptLink = useMemo(() => buildReceiptLink(tx), [tx]);
+    const receiptLink = useMemo(() => tx ? buildReceiptLink(tx) : '', [tx]);
 
     const handleShare = useCallback(async () => {
+        if (!tx) return;
         try {
             await Haptics.selectionAsync();
             const svg = buildReceiptSvg(tx, receiptVisibility);
@@ -359,18 +364,52 @@ export default function TransactionDetailScreen() {
     );
 
     const statusColor =
-        tx.status === 'Success'
+        tx?.status === 'Success'
             ? theme.status.success
-            : tx.status === 'Pending'
+            : tx?.status === 'Pending'
                 ? theme.status.warning
                 : theme.status.error;
 
     const statusBg =
-        tx.status === 'Success'
+        tx?.status === 'Success'
             ? theme.status.successBg
-            : tx.status === 'Pending'
+            : tx?.status === 'Pending'
                 ? theme.status.warningBg
                 : theme.status.errorBg;
+
+    if (!tx) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: theme.surface }]} edges={['top', 'bottom']}>
+                <View style={[styles.header, { borderBottomColor: theme.border }]}>
+                    <TouchableOpacity onPress={() => router.back()} style={styles.iconButton}>
+                        <Ionicons name="chevron-back" size={24} color={theme.textPrimary} />
+                    </TouchableOpacity>
+                    <Text style={[styles.headerTitle, { color: theme.textPrimary }]}>Transaction Receipt</Text>
+                    <View style={styles.iconButton} />
+                </View>
+                <View style={styles.centerContent}>
+                    {hydrating ? (
+                        <View style={styles.hydrating}>
+                            <ActivityIndicator color={theme.primary} size="large" />
+                            <Text style={[styles.hydratingText, { color: theme.textSecondary, marginTop: 16 }]}>
+                                Loading transaction details...
+                            </Text>
+                        </View>
+                    ) : (
+                        <View style={styles.errorState}>
+                            <Ionicons name="alert-circle-outline" size={48} color={theme.status.error} />
+                            <Text style={[styles.errorTitle, { color: theme.textPrimary, marginTop: 16, fontSize: 18, fontWeight: 'bold' }]}>
+                                Receipt not found
+                            </Text>
+                            <Text style={[styles.errorDescription, { color: theme.textSecondary, marginTop: 8, textAlign: 'center' }]}>
+                                We couldn't load the details for this transaction. It may have expired or the link might be invalid.
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView
@@ -443,20 +482,6 @@ export default function TransactionDetailScreen() {
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
             >
-                {hydrating && (
-                    <View style={styles.hydrating}>
-                        <ActivityIndicator color={theme.primary} />
-                        <Text
-                            style={[
-                                styles.hydratingText,
-                                { color: theme.textSecondary },
-                            ]}
-                        >
-                            Loading transaction details...
-                        </Text>
-                    </View>
-                )}
-
                 {/* Hero Section */}
                 <View style={styles.hero}>
                     <View
@@ -844,6 +869,27 @@ export default function TransactionDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+    centerContent: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    errorState: {
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    errorTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginTop: 16,
+    },
+    errorDescription: {
+        fontSize: 15,
+        textAlign: 'center',
+        marginTop: 8,
+        lineHeight: 22,
+    },
     container: {
         flex: 1,
     },

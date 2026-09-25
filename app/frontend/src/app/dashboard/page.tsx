@@ -14,82 +14,39 @@ import {
   type UserBid,
   type UserListing,
 } from "@/hooks/marketplaceApi";
-import { mockContractCall, mockFetch } from "@/hooks/mockApi";
-
-type ActivityItem = {
-  id: string;
-  amount: string;
-  asset: string;
-  memo: string;
-  date: string;
-  status: "Pending" | "Settled" | "Privacy Enabled";
-  privacy: "Enabled" | "Public";
-  action: "extend" | "cleanup";
-};
+import {
+  fetchActivityFeed,
+  type ActivityFeedItem,
+} from "@/hooks/activityFeedApi";
+import { formatCurrency } from "@/lib/formatting";
 
 type DashboardResponse = {
-  items: ActivityItem[];
+  items: ActivityFeedItem[];
+  degraded: boolean;
 };
-
-const ACTIVITY_ITEMS: ActivityItem[] = [
-  {
-    id: "GD2P...5H2W",
-    amount: "50.00",
-    asset: "USDC",
-    memo: "Project milestone #1",
-    date: "2 mins ago",
-    status: "Pending",
-    privacy: "Enabled",
-    action: "extend",
-  },
-  {
-    id: "GD1R...3K9L",
-    amount: "125.00",
-    asset: "XLM",
-    memo: "Frontend consulting",
-    date: "Jan 20, 14:32",
-    status: "Settled",
-    privacy: "Public",
-    action: "cleanup",
-  },
-  {
-    id: "GC8T...9Q0M",
-    amount: "20.00",
-    asset: "USDC",
-    memo: "Subscription renewal",
-    date: "Jan 19, 09:12",
-    status: "Privacy Enabled",
-    privacy: "Enabled",
-    action: "cleanup",
-  },
-];
 
 function toAnchorId(prefix: string, value: string) {
   return `${prefix}-${value.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
-function getStatusClasses(status: ActivityItem["status"]) {
+function getStatusClasses(status: ActivityFeedItem["status"]) {
   switch (status) {
     case "Pending":
-      return "text-warning";
+      return "border-amber-300/40 bg-amber-400/10 text-warning";
     case "Settled":
-      return "text-success";
+      return "border-emerald-300/40 bg-emerald-400/10 text-success";
     default:
-      return "text-brand";
+      return "border-slate-300/40 bg-slate-400/10 text-muted";
   }
+}
+
+function shortAddress(key: string): string {
+  if (key.length <= 12) return key;
+  return `${key.slice(0, 6)}…${key.slice(-4)}`;
 }
 
 const FOCUS_RING_CLASS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
-
-function formatCurrency(val: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
-}
 
 function DashboardContent() {
   const searchParams = useSearchParams();
@@ -97,6 +54,7 @@ function DashboardContent() {
   const [userBids, setUserBids] = useState<UserBid[]>([]);
   const [userListings, setUserListings] = useState<UserListing[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [feedRetryCount, setFeedRetryCount] = useState(0);
 
   const [metricsData, setMetricsData] = useState<AnalyticsData | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(true);
@@ -109,7 +67,8 @@ function DashboardContent() {
       const data = await fetchAnalytics("30d");
       setMetricsData(data);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Failed to load backend metrics";
+      const message =
+        err instanceof Error ? err.message : "Failed to load backend metrics";
       setMetricsError(message);
     } finally {
       setMetricsLoading(false);
@@ -121,14 +80,10 @@ function DashboardContent() {
   }, [loadMetrics]);
 
   useEffect(() => {
-    void callApi(() =>
-      mockFetch({
-        items: ACTIVITY_ITEMS,
-      }),
-    );
+    void callApi(() => fetchActivityFeed(20));
     void fetchUserBids().then(setUserBids);
     void fetchUserListings().then(setUserListings);
-  }, [callApi]);
+  }, [callApi, feedRetryCount]);
 
   useEffect(() => {
     if (!statusMessage) {
@@ -210,22 +165,55 @@ function DashboardContent() {
     return null;
   }, [highlightedBid, highlightedListing, highlightedTransaction]);
 
-  const handleExtend = async (id: string) => {
-    await mockContractCall("extend", id);
-    setStatusMessage(`Storage TTL extended for transaction ${id}.`);
-  };
-
-  const handleCleanup = async (id: string) => {
-    await mockContractCall("cleanup", id);
-    setStatusMessage(`Storage deposit reclaimed for transaction ${id}.`);
+  const handleRetry = () => {
+    setFeedRetryCount((prev) => prev + 1);
   };
 
   if (loading) {
-    return <p className="text-muted">Loading dashboard...</p>;
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="text-center">
+          <div className="mb-4 h-8 w-8 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent mx-auto" />
+          <p className="text-muted">Loading dashboard...</p>
+        </div>
+      </div>
+    );
   }
 
   if (error) {
-    return <p className="text-danger">{error}</p>;
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="max-w-md text-center">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 mx-auto">
+            <svg
+              className="h-8 w-8 text-danger"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+              />
+            </svg>
+          </div>
+          <h3 className="text-lg font-semibold text-foreground">
+            Failed to load dashboard
+          </h3>
+          <p className="mt-2 text-sm text-muted">{error}</p>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="mt-6 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-indigo-400"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -242,7 +230,10 @@ function DashboardContent() {
       <div className="fixed bottom-[-20%] right-[-30%] h-[50%] w-[50%] rounded-full bg-purple-500/5 blur-[100px]" />
 
       <aside className="fixed left-0 top-0 z-20 hidden h-screen w-72 flex-col border-r border-border bg-card backdrop-blur-3xl md:flex">
-        <nav className="flex-1 space-y-2 px-4 py-20" aria-label="Dashboard navigation">
+        <nav
+          className="flex-1 space-y-2 px-4 py-20"
+          aria-label="Dashboard navigation"
+        >
           <Link
             href="/dashboard"
             aria-current="page"
@@ -271,7 +262,10 @@ function DashboardContent() {
         </nav>
       </aside>
 
-      <main id="dashboard-main" className="relative z-10 p-4 sm:p-6 md:ml-72 md:p-12">
+      <main
+        id="dashboard-main"
+        className="relative z-10 p-4 sm:p-6 md:ml-72 md:p-12"
+      >
         <header className="mb-10 flex flex-col gap-6 md:mb-16 md:flex-row md:items-start md:justify-between">
           <div>
             <nav className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-subtle md:mb-4">
@@ -328,7 +322,9 @@ function DashboardContent() {
             </>
           ) : metricsError ? (
             <div className="col-span-full rounded-3xl border border-red-500/20 bg-surface p-6 text-center">
-              <p className="text-sm font-semibold text-danger">Failed to load backend metrics: {metricsError}</p>
+              <p className="text-sm font-semibold text-danger">
+                Failed to load backend metrics: {metricsError}
+              </p>
               <button
                 onClick={() => void loadMetrics()}
                 className="mt-3 rounded-xl bg-indigo-500 px-4 py-2 text-xs font-bold text-white transition hover:bg-indigo-400"
@@ -348,14 +344,18 @@ function DashboardContent() {
                 </p>
                 <div className="flex items-baseline gap-2">
                   <p className="text-4xl font-semibold text-foreground">
-                    {formatCurrency(metricsData?.summary.totalVolume ?? 0)}
+                    {formatCurrency(
+                      metricsData?.summary.totalVolume ?? 0,
+                      "USD",
+                    )}
                   </p>
                   <span className="rounded-full bg-emerald-400/10 px-2 py-1 text-xs font-semibold text-success">
                     Live Backend Data
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-subtle">
-                  Avg tx size: {formatCurrency(metricsData?.summary.avgTxSize ?? 0)}
+                  Avg tx size:{" "}
+                  {formatCurrency(metricsData?.summary.avgTxSize ?? 0, "USD")}
                 </p>
               </div>
 
@@ -375,11 +375,14 @@ function DashboardContent() {
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-strong">
                   <div
                     className="h-full bg-indigo-400 transition-all duration-500"
-                    style={{ width: `${Math.min(Math.max(metricsData?.summary.conversionRate ?? 100, 0), 100)}%` }}
+                    style={{
+                      width: `${Math.min(Math.max(metricsData?.summary.conversionRate ?? 100, 0), 100)}%`,
+                    }}
                   />
                 </div>
                 <p className="mt-2 text-xs text-subtle">
-                  {metricsData?.summary.successfulTx ?? 0} settled, {metricsData?.summary.failedTx ?? 0} failed
+                  {metricsData?.summary.successfulTx ?? 0} settled,{" "}
+                  {metricsData?.summary.failedTx ?? 0} failed
                 </p>
               </div>
 
@@ -389,11 +392,15 @@ function DashboardContent() {
                   Available Payout
                 </p>
                 <p className="text-4xl font-semibold text-white">
-                  {formatCurrency((metricsData?.summary.totalVolume ?? 0) * 0.85).replace("$", "")}{" "}
+                  {formatCurrency(
+                    (metricsData?.summary.totalVolume ?? 0) * 0.85,
+                    "USD",
+                  ).replace("$", "")}{" "}
                   <span className="text-xl opacity-80">USDC</span>
                 </p>
                 <p className="mt-3 text-xs text-white/90">
-                  {metricsData?.summary.refundCount ?? 0} refunds • Estimated settlement: 3 seconds
+                  {metricsData?.summary.refundCount ?? 0} refunds • Estimated
+                  settlement: 3 seconds
                 </p>
               </div>
             </>
@@ -411,131 +418,179 @@ function DashboardContent() {
         >
           <div className="flex flex-col justify-between gap-4 border-b border-border p-6 sm:flex-row sm:p-10">
             <div>
-              <h2 className="text-2xl font-semibold text-foreground">Activity Feed</h2>
+              <h2 className="text-2xl font-semibold text-foreground">
+                Activity Feed
+              </h2>
               <p className="mt-1 text-sm text-muted">
-                Direct payment history, with actions and notification deep links.
+                Live payment history fetched from the Stellar network.
               </p>
             </div>
 
-            <div className="rounded-xl border border-border bg-surface p-2">
-              <label htmlFor="dashboard-range" className="sr-only">
-                Filter activity period
-              </label>
-              <select
-                id="dashboard-range"
-                className={`bg-transparent text-sm font-semibold text-foreground ${FOCUS_RING_CLASS}`}
-                defaultValue="Last 30 Days"
-              >
-                <option>Last 30 Days</option>
-                <option>Yearly</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="min-w-[700px] w-full text-left">
-              <caption className="sr-only">
-                Recent payment activity with actions to extend TTL or clean up
-                completed records.
-              </caption>
-              <thead>
-                <tr className="border-b border-border text-[10px] font-semibold uppercase tracking-[0.24em] text-muted">
-                  <th className="px-6 py-4 sm:px-10 sm:py-6">Transaction ID</th>
-                  <th className="px-6 py-4 sm:px-10 sm:py-6">Asset</th>
-                  <th className="px-6 py-4 sm:px-10 sm:py-6">Memo / Status</th>
-                  <th className="px-6 py-4 sm:px-10 sm:py-6">Timestamp</th>
-                  <th className="px-6 py-4 text-right sm:px-10 sm:py-6">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-border">
-                {(data?.items ?? []).map((item, index) => {
-                  const isHighlighted = item.id === highlightedTransaction;
-
-                  return (
-                    <tr
-                      key={item.id}
-                      id={toAnchorId("transaction", item.id)}
-                      tabIndex={-1}
-                      className={`transition ${
-                        isHighlighted
-                          ? "bg-indigo-500/10"
-                          : "hover:bg-surface"
-                      }`}
-                    >
-                      <td className="px-6 py-6 sm:px-10">
-                        <div className="flex items-center gap-3">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface font-mono text-[10px] opacity-70">
-                            #{index + 1}
-                          </span>
-                          <span className="font-mono text-sm text-foreground sm:text-base">
-                            {item.id}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-6 text-lg font-semibold sm:px-10">
-                        {item.amount} {item.asset}
-                      </td>
-                      <td className="px-6 py-6 sm:px-10">
-                        <div className="flex flex-col">
-                          <span className="font-semibold text-foreground">
-                            {item.memo}
-                          </span>
-                          <div className="mt-1 flex items-center gap-2">
-                            <span
-                              className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${getStatusClasses(
-                                item.status,
-                              )}`}
-                            >
-                              {item.status}
-                            </span>
-                            <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-muted">
-                              Privacy {item.privacy}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-6 text-muted sm:px-10">
-                        {item.date}
-                      </td>
-                      <td className="px-6 py-6 text-right sm:px-10">
-                        {item.action === "extend" ? (
-                          <button
-                            type="button"
-                            onClick={() => void handleExtend(item.id)}
-                            className={`rounded-full bg-indigo-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-brand transition hover:bg-indigo-500 hover:text-white ${FOCUS_RING_CLASS}`}
-                            aria-label={`Extend TTL for transaction ${item.id}`}
-                          >
-                            Extend TTL
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => void handleCleanup(item.id)}
-                            className={`rounded-full bg-red-500/10 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-danger transition hover:bg-red-500 hover:text-white ${FOCUS_RING_CLASS}`}
-                            aria-label={`Clean up transaction ${item.id}`}
-                          >
-                            Cleanup
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="bg-surface p-6 text-center sm:p-8">
-            <Link
-              href="/notifications?category=payments"
-              className={`text-sm font-semibold text-muted transition hover:text-foreground ${FOCUS_RING_CLASS}`}
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={loading}
+              className={`rounded-xl border border-border bg-surface px-4 py-2 text-sm font-semibold text-muted transition hover:border-indigo-300/40 hover:text-foreground disabled:opacity-50 ${FOCUS_RING_CLASS}`}
+              aria-label="Refresh activity feed"
             >
-              View payment alerts
-            </Link>
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
+
+          {data?.degraded ? (
+            <div className="mx-6 mt-6 rounded-2xl border border-amber-300/30 bg-amber-400/5 p-4 sm:mx-10 sm:mt-10">
+              <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                The activity feed is temporarily unavailable. Showing cached or
+                partial data.{" "}
+                <button
+                  type="button"
+                  onClick={handleRetry}
+                  className="underline transition hover:text-amber-800 dark:hover:text-amber-300"
+                >
+                  Retry
+                </button>
+              </p>
+            </div>
+          ) : null}
+
+          {!data || (data.items.length === 0 && !data.degraded) ? (
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center sm:px-10">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-surface">
+                <svg
+                  className="h-8 w-8 text-muted"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">
+                No activity yet
+              </h3>
+              <p className="mt-2 max-w-md text-sm text-muted">
+                Your recent payments will appear here once transactions are
+                detected on the Stellar network. Create a payment link to get
+                started.
+              </p>
+              <Link
+                href="/generator"
+                className={`mt-6 rounded-xl bg-indigo-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg transition hover:bg-indigo-400 ${FOCUS_RING_CLASS}`}
+              >
+                Create payment link
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="min-w-[700px] w-full text-left">
+                  <caption className="sr-only">
+                    Recent payment activity from the Stellar network.
+                  </caption>
+                  <thead>
+                    <tr className="border-b border-border text-[10px] font-semibold uppercase tracking-[0.24em] text-muted">
+                      <th className="px-6 py-4 sm:px-10 sm:py-6">
+                        Transaction
+                      </th>
+                      <th className="px-6 py-4 sm:px-10 sm:py-6">Amount</th>
+                      <th className="px-6 py-4 sm:px-10 sm:py-6">
+                        Memo / Status
+                      </th>
+                      <th className="px-6 py-4 sm:px-10 sm:py-6">From / To</th>
+                      <th className="px-6 py-4 sm:px-10 sm:py-6">Date</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-border">
+                    {(data?.items ?? []).map((item, index) => {
+                      const isHighlighted = item.id === highlightedTransaction;
+
+                      return (
+                        <tr
+                          key={item.id}
+                          id={toAnchorId("transaction", item.id)}
+                          tabIndex={-1}
+                          className={`transition ${
+                            isHighlighted
+                              ? "bg-indigo-500/10"
+                              : "hover:bg-surface"
+                          }`}
+                        >
+                          <td className="px-6 py-6 sm:px-10">
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-surface font-mono text-[10px] opacity-70">
+                                #{index + 1}
+                              </span>
+                              <span className="font-mono text-sm text-foreground sm:text-base">
+                                {shortAddress(item.id)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-6 text-lg font-semibold sm:px-10">
+                            {item.amount} {item.asset}
+                          </td>
+                          <td className="px-6 py-6 sm:px-10">
+                            <div className="flex flex-col gap-1.5">
+                              {item.memo ? (
+                                <span className="font-semibold text-foreground">
+                                  {item.memo}
+                                </span>
+                              ) : (
+                                <span className="text-xs italic text-subtle">
+                                  No memo
+                                </span>
+                              )}
+                              <span
+                                className={`inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.24em] ${getStatusClasses(
+                                  item.status,
+                                )}`}
+                              >
+                                {item.status}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-6 sm:px-10">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-muted">
+                                From:{" "}
+                                <span className="font-mono text-subtle">
+                                  {shortAddress(item.source)}
+                                </span>
+                              </span>
+                              <span className="text-xs text-muted">
+                                To:{" "}
+                                <span className="font-mono text-subtle">
+                                  {shortAddress(item.destination)}
+                                </span>
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-6 text-muted sm:px-10">
+                            {item.date}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-surface p-6 text-center sm:p-8">
+                <Link
+                  href="/notifications?category=payments"
+                  className={`text-sm font-semibold text-muted transition hover:text-foreground ${FOCUS_RING_CLASS}`}
+                >
+                  View payment alerts
+                </Link>
+              </div>
+            </>
+          )}
         </section>
 
         <section className="mt-10 overflow-hidden rounded-3xl border border-border bg-card shadow-2xl backdrop-blur-2xl md:mt-16">
@@ -606,9 +661,7 @@ function DashboardContent() {
                 My Listings
               </h3>
               {userListings.length === 0 ? (
-                <p className="text-sm text-muted">
-                  No usernames listed yet.
-                </p>
+                <p className="text-sm text-muted">No usernames listed yet.</p>
               ) : (
                 <div className="space-y-3">
                   {userListings.map((listing) => (
@@ -659,9 +712,7 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense
-      fallback={<p className="text-muted">Loading dashboard...</p>}
-    >
+    <Suspense fallback={<p className="text-muted">Loading dashboard...</p>}>
       <DashboardContent />
     </Suspense>
   );

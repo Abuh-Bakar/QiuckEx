@@ -15,20 +15,25 @@ import { CancellationStore } from "./cancellation-token";
 import { JobQueueInitializer } from "./job-queue-initializer.service";
 import { JobAdminController } from "./job-admin.controller";
 import { JobQueueMetricsService } from "./job-queue-metrics.service";
+import { DeadLetterQueueMonitorService } from "./dead-letter-monitor.service";
 import { SupabaseModule } from "../supabase/supabase.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { NotificationPreferencesRepository } from "../notifications/notification-preferences.repository";
 import { LinksModule } from "../links/links.module";
 import { ReconciliationModule } from "../reconciliation/reconciliation.module";
 import { IngestionModule } from "../ingestion/ingestion.module";
 import { AuthModule } from "../auth/auth.module";
 import { MetricsModule } from "../metrics/metrics.module";
 import { ApiKeysModule } from "../api-keys/api-keys.module";
+import { FiatRampsModule } from "../fiat-ramps/fiat-ramps.module";
+import { ExportStorageModule } from "../exports/export-storage.module";
 import {
   WebhookDeliveryHandler,
   RecurringPaymentHandler,
   ExportGenerationHandler,
   ReconciliationHandler,
   StellarReconnectHandler,
+  Sep24StatusPollHandler,
 } from "./handlers";
 
 /**
@@ -55,10 +60,12 @@ import {
     AuthModule,
     MetricsModule,
     ApiKeysModule,
+    ExportStorageModule,
     forwardRef(() => NotificationsModule),
     forwardRef(() => LinksModule),
     forwardRef(() => ReconciliationModule),
     forwardRef(() => IngestionModule),
+    forwardRef(() => FiatRampsModule),
   ],
   controllers: [JobAdminController],
   providers: [
@@ -70,11 +77,14 @@ import {
     CancellationStore,
     JobQueueInitializer,
     JobQueueMetricsService,
+    DeadLetterQueueMonitorService,
     WebhookDeliveryHandler,
     RecurringPaymentHandler,
     ExportGenerationHandler,
     ReconciliationHandler,
     StellarReconnectHandler,
+    Sep24StatusPollHandler,
+    NotificationPreferencesRepository,
   ],
   exports: [
     JobQueueService,
@@ -87,6 +97,7 @@ import {
     ExportGenerationHandler,
     ReconciliationHandler,
     StellarReconnectHandler,
+    Sep24StatusPollHandler,
   ],
 })
 export class JobQueueModule {}

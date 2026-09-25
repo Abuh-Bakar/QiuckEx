@@ -15,14 +15,15 @@
 //! | [`ContractVersion`](DataKey::ContractVersion) | `u32` | Stored schema/version marker for upgrade migrations. |
 //! | [`Admin`](DataKey::Admin) | `Address`     | Contract admin address. Set during initialisation, transferable by admin. |
 //! | [`Paused`](DataKey::Paused) | `bool`       | Global pause flag. When true, critical operations may be blocked. |
-//! | [`PrivacyLevel`](DataKey::PrivacyLevel) | `u32`  | Numeric privacy level per account (0 = off). Used by `enable_privacy`. |
-//! | [`PrivacyHistory`](DataKey::PrivacyHistory) | `Vec<u32>` | Per-account history of privacy level changes (chronological). |
+//! | [`PrivacyEnabled`](DataKey::PrivacyEnabled) | `bool` | **Canonical** privacy state per account (Issue #862 / SC-W8-01). Single source of truth for `set_privacy`/`get_privacy`/`enable_privacy`/`privacy_status`. |
+//! | [`PrivacyLevel`](DataKey::PrivacyLevel) | `u32`  | **Deprecated.** Legacy numeric privacy level (0 = off, nonzero = on). Read as a migration fallback only; cleared the first time the account's state is written through any privacy entrypoint. |
+//! | [`PrivacyHistory`](DataKey::PrivacyHistory) | `Vec<u32>` | Append-only audit log of every `{0, 1}` value ever requested through `enable_privacy`, newest first. Not authoritative. |
 //!
 //! ## Related Keys (legacy compatibility)
 //!
 //! | Key                    | Format                    | Value Type | Description |
 //! |------------------------|---------------------------|------------|-------------|
-//! | `privacy_enabled`      | `(Symbol, Address)`       | `bool`     | Legacy boolean privacy on/off key. Read as a fallback and migrated to [`DataKey::PrivacyEnabled`] on write. |
+//! | `privacy_enabled`      | `(Symbol, Address)`       | `bool`     | Legacy boolean privacy on/off key (pre-typed-`DataKey`). Read as a fallback and migrated to [`DataKey::PrivacyEnabled`] on write. |
 //!
 //! ## Relations
 //!
@@ -30,8 +31,13 @@
 //!   (`SHA256(owner || amount || salt)`). The stored [`EscrowEntry`] contains token, amount, owner,
 //!   status, and created_at.
 //! - **Admin ↔ Paused**: Admin can set the paused flag. Both are singleton keys.
-//! - **PrivacyLevel ↔ PrivacyHistory**: Same account may have both; level is current, history is append-only.
-//! - **PrivacyLevel / PrivacyHistory ↔ PrivacyEnabled**: Separate APIs; level-based vs boolean. Both persist per `Address`.
+//! - **PrivacyEnabled ↔ PrivacyLevel ↔ `privacy_enabled` (legacy Symbol key)**: All three describe the
+//!   same logical account state. [`DataKey::PrivacyEnabled`] is authoritative; the other two are read-only
+//!   migration fallbacks consulted (in that order) only when the canonical key is absent, and are cleared
+//!   as soon as the account is written through [`crate::privacy`]. This makes it impossible for
+//!   `get_privacy`/`set_privacy` and `enable_privacy`/`privacy_status` to disagree about one account.
+//! - **PrivacyLevel ↔ PrivacyHistory**: History is a append-only log fed by `enable_privacy`; it does not
+//!   itself determine state.
 //!
 //! ## Backwards Compatibility
 //!
@@ -49,7 +55,11 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Map, Vec};
 #[cfg(test)]
 use soroban_sdk::xdr::ToXdr;
 
-use crate::types::{DisputeVote, EscrowEntry, FeeConfig, Role, StealthEscrowEntry};
+use crate::errors::QuickexError;
+use crate::types::{
+    CachedOraclePrice, DisputeVote, EscrowEntry, FeeConfig, PendingAdminProposal, Role,
+    StealthEscrowEntry,
+};
 
 /// Record type for TTL policy selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,6 +121,11 @@ pub const CURRENT_CONTRACT_VERSION: u32 = 1;
 pub const LEDGER_THRESHOLD: u32 = 17280; // ~1 day
 pub const SIX_MONTHS_IN_LEDGERS: u32 = 3110400; // ~185 days
 
+/// Minimum timelock (seconds) that must elapse between an admin-transfer
+/// proposal and its acceptance. The caller may configure a longer delay
+/// per-proposal, but never shorter than this floor (Issue #870).
+pub const MIN_ADMIN_TRANSFER_DELAY: u64 = 86_400; // 1 day
+
 /// Bitmask flags for granular operation pausing.
 #[contracttype]
 #[repr(u64)]
@@ -122,6 +137,7 @@ pub enum PauseFlag {
     DepositWithCommitment = 8,
     SetPrivacy = 16,
     CreateAmountCommitment = 32,
+    FeeWithdrawal = 64,
 }
 
 // -----------------------------------------------------------------------------
@@ -149,6 +165,9 @@ pub enum DataKey {
     ContractVersion,
     /// Admin address (singleton).
     Admin,
+    /// Pending, timelocked admin-transfer proposal (singleton). Absent when
+    /// no transfer is currently proposed (Issue #870).
+    PendingAdminProposal,
     /// Explicit one-time initialization flag (singleton).
     Initialized,
     /// Paused state (singleton).
@@ -161,9 +180,9 @@ pub enum DataKey {
     UpgradeWindowEnd,
     /// Flag indicating an upgrade is in progress (between start_upgrade and complete_upgrade).
     UpgradeInProgress,
-    /// Numeric privacy level per account.
+    /// Deprecated numeric privacy level; read-only migration fallback.
     PrivacyLevel(Address),
-    /// Privacy level change history per account.
+    /// Deprecated `enable_privacy` audit history. Not authoritative.
     PrivacyHistory(Address),
     /// Stealth escrow entry keyed by the 32-byte stealth address (Privacy v2).
     StealthEscrow(BytesN<32>),
@@ -179,11 +198,13 @@ pub enum DataKey {
     PlatformWallet,
     /// Oracle fee configuration for dynamic USD-based fees.
     OracleFeeConfig,
+    /// Cached oracle price with timestamp for staleness guards.
+    CachedOraclePrice,
     /// Registered hook contract addresses.
     HookRegistry,
     /// Reentrancy guard to prevent callback-based reentry during hook execution.
     ReentrancyGuard,
-    /// Boolean privacy flag per account.
+    /// Canonical boolean privacy flag; single source of truth.
     PrivacyEnabled(Address),
     /// 32-byte WASM hash stored at the last `upgrade()` call (singleton).
     WasmHash,
@@ -201,6 +222,25 @@ pub enum DataKey {
     FeeCollector(u32),
     /// Tracks arbiter votes for disputed escrows. Keyed by (commitment, arbiter).
     DisputeVote(Bytes, Address),
+    /// Tracks whether a hook contract is on the allowlist.
+    HookAllowlist(Address),
+    /// Configurable TTL policy for escrow entries (singleton).
+    /// See [`crate::ttl_policy::TtlConfig`] for the stored type.
+    TtlConfig,
+    /// Registered multi-source oracle addresses (singleton, SC-W8-06).
+    /// See [`crate::oracle::fetch_aggregated_price`].
+    OracleSources,
+    /// Per-source cached oracle price, keyed by source address (SC-W8-06).
+    OracleSourcePrice(Address),
+    /// Multi-source oracle aggregation configuration (singleton, SC-W8-06).
+    OracleAggregationConfig,
+    /// Admin-configurable dispute quorum / vote-TTL policy (singleton).
+    DisputeQuorumConfig,
+    /// Per-dispute frozen quorum snapshot, keyed by commitment.
+    DisputeQuorum(Bytes),
+    /// Accrued, admin-withdrawable protocol fee balance per token. Only ever
+    /// credited when a settlement has no configured collector; never principal.
+    AccruedFees(Address),
 }
 
 /// Compact escrow record stored on the hot path.
@@ -323,6 +363,7 @@ fn put_escrow_dispute_config(env: &Env, commitment: &Bytes, entry: &EscrowEntry)
     set_or_extend_ttl(env, &key, RecordType::EscrowDispute);
 }
 
+#[allow(dead_code)]
 fn extend_escrow_compaction_ttl(env: &Env, commitment: &Bytes) -> bool {
     let core_key = compact_escrow_key(commitment);
     if env.storage().persistent().has(&core_key) {
@@ -344,10 +385,6 @@ fn extend_escrow_compaction_ttl(env: &Env, commitment: &Bytes) -> bool {
 
     false
 }
-
-// -----------------------------------------------------------------------------
-// Emergency Mode helpers (module scope)
-// -----------------------------------------------------------------------------
 /// Set emergency mode. Once set to true, cannot be reverted.
 pub fn set_emergency_mode(env: &Env) {
     let key = DataKey::EmergencyMode;
@@ -529,6 +566,8 @@ pub fn has_escrow(env: &Env, commitment: &Bytes) -> bool {
 }
 
 /// Extend the TTL of whichever escrow representation is currently stored.
+/// Used by `ttl_policy` module for the policy-neutral baseline bump.
+#[allow(dead_code)]
 pub fn extend_escrow_storage_ttl(env: &Env, commitment: &Bytes) -> bool {
     extend_escrow_compaction_ttl(env, commitment)
 }
@@ -562,7 +601,9 @@ pub(crate) fn compact_escrow_storage_footprint_bytes(
 
 /// Get the next escrow counter value.
 ///
-/// **Contract**: Returns 0 if never set. Counter is used for `create_escrow`.
+/// **Contract**: Returns 0 if never set. Checked as a post-upgrade invariant
+/// (see `validate_upgrade_invariants`); no contract entrypoint reads it
+/// directly (the `create_escrow` stub that once did was removed — SC-W8-02).
 #[allow(dead_code)]
 pub fn get_escrow_counter(env: &Env) -> u64 {
     let key = DataKey::EscrowCounter;
@@ -571,7 +612,10 @@ pub fn get_escrow_counter(env: &Env) -> u64 {
 
 /// Increment and return the escrow counter.
 ///
-/// **Contract**: Atomic increment. Initial value treated as 0.
+/// **Contract**: Atomic increment. Initial value treated as 0. No contract
+/// entrypoint calls this anymore (the `create_escrow` stub that once did was
+/// removed — SC-W8-02); kept for storage-migration test coverage.
+#[allow(dead_code)]
 pub fn increment_escrow_counter(env: &Env) -> u64 {
     let key = DataKey::EscrowCounter;
     let mut count: u64 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -629,6 +673,32 @@ pub fn set_admin(env: &Env, admin: &Address) {
 pub fn get_admin(env: &Env) -> Option<Address> {
     let key = DataKey::Admin;
     env.storage().persistent().get(&key)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Timelocked Admin Transfer helpers (Issue #870)
+// ─────────────────────────────────────────────────────────────────────────
+
+/// Get the currently pending admin-transfer proposal, if any.
+pub fn get_pending_admin_proposal(env: &Env) -> Option<PendingAdminProposal> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::PendingAdminProposal)
+}
+
+/// Store a new (or overwrite the existing) pending admin-transfer proposal.
+pub fn set_pending_admin_proposal(env: &Env, proposal: &PendingAdminProposal) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::PendingAdminProposal, proposal);
+}
+
+/// Clear any pending admin-transfer proposal (on accept or cancel).
+pub fn clear_pending_admin_proposal(env: &Env) {
+    let key = DataKey::PendingAdminProposal;
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -726,25 +796,35 @@ pub fn is_paused(env: &Env) -> bool {
 }
 
 // -----------------------------------------------------------------------------
-// Privacy helpers (level-based API)
+// Privacy helpers (deprecated level-based API; see `crate::privacy` for the
+// canonical boolean state consolidated under Issue #862 / SC-W8-01)
 // -----------------------------------------------------------------------------
 
-/// Set privacy level for an account.
-pub fn set_privacy_level(env: &Env, account: &Address, level: u32) {
-    let key = DataKey::PrivacyLevel(account.clone());
-    env.storage().persistent().set(&key, &level);
-}
-
-/// Get privacy level for an account.
+/// Get the deprecated numeric privacy level for an account, if ever set.
+///
+/// Read-only migration fallback; new writes no longer go through this key.
 pub fn get_privacy_level(env: &Env, account: &Address) -> Option<u32> {
     let key = DataKey::PrivacyLevel(account.clone());
     env.storage().persistent().get(&key)
 }
 
-/// Add to privacy history for an account.
+/// Remove the deprecated numeric privacy level for an account, if present.
+///
+/// Called once the account's state has been written through the canonical
+/// [`crate::privacy`] API, so future reads can never fall back to stale data.
+pub fn clear_privacy_level(env: &Env, account: &Address) {
+    let key = DataKey::PrivacyLevel(account.clone());
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Add to the deprecated `enable_privacy` audit history for an account.
 ///
 /// **Contract**: Pushes `level` to the front of the history (newest first).
-/// History is unbounded; consider capping in future if needed.
+/// History is unbounded; consider capping in future if needed. This log is
+/// purely additive and does not itself determine canonical privacy state —
+/// see [`crate::privacy`].
 pub fn add_privacy_history(env: &Env, account: &Address, level: u32) {
     let key = DataKey::PrivacyHistory(account.clone());
     let mut history: Vec<u32> = env
@@ -796,6 +876,48 @@ pub fn set_platform_wallet(env: &Env, wallet: &Address) {
         .set(&DataKey::PlatformWallet, wallet);
 }
 
+// -----------------------------------------------------------------------------
+// Accrued fee treasury (Issue #866 / SC-W8-05)
+// -----------------------------------------------------------------------------
+
+/// Get the accrued, admin-withdrawable protocol fee balance for `token`.
+///
+/// Defaults to `0` if the token has never accrued an un-forwarded fee.
+pub fn get_accrued_fee_balance(env: &Env, token: &Address) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AccruedFees(token.clone()))
+        .unwrap_or(0)
+}
+
+/// Credit `amount` to `token`'s accrued fee balance.
+///
+/// Called only from `fee_router` when a settlement's platform-fee portion
+/// has no configured collector to forward to; never from escrow principal.
+pub fn add_accrued_fee(env: &Env, token: &Address, amount: i128) {
+    let key = DataKey::AccruedFees(token.clone());
+    let current = get_accrued_fee_balance(env, token);
+    env.storage()
+        .persistent()
+        .set(&key, &current.saturating_add(amount));
+    set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+}
+
+/// Debit `amount` from `token`'s accrued fee balance.
+///
+/// # Errors
+/// - [`QuickexError::Overpayment`] – `amount` exceeds the current accrued balance.
+pub fn subtract_accrued_fee(env: &Env, token: &Address, amount: i128) -> Result<(), QuickexError> {
+    let key = DataKey::AccruedFees(token.clone());
+    let current = get_accrued_fee_balance(env, token);
+    if amount > current {
+        return Err(QuickexError::Overpayment);
+    }
+    env.storage().persistent().set(&key, &(current - amount));
+    set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+    Ok(())
+}
+
 pub fn get_oracle_fee_config(env: &Env) -> Option<crate::types::OracleFeeConfig> {
     env.storage().persistent().get(&DataKey::OracleFeeConfig)
 }
@@ -804,6 +926,89 @@ pub fn set_oracle_fee_config(env: &Env, config: &crate::types::OracleFeeConfig) 
     env.storage()
         .persistent()
         .set(&DataKey::OracleFeeConfig, config);
+}
+
+/// Get the cached oracle price record (price + timestamp).
+pub fn get_cached_oracle_price(env: &Env) -> Option<CachedOraclePrice> {
+    env.storage().persistent().get(&DataKey::CachedOraclePrice)
+}
+
+/// Set the cached oracle price record. Called when the oracle delivers a fresh price.
+pub fn set_cached_oracle_price(env: &Env, price: &CachedOraclePrice) {
+    let key = DataKey::CachedOraclePrice;
+    env.storage().persistent().set(&key, price);
+    set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+}
+
+// -----------------------------------------------------------------------------
+// Multi-source oracle aggregation (SC-W8-06 / Issue #867)
+// -----------------------------------------------------------------------------
+
+/// Get the list of registered oracle source addresses. Empty if none registered.
+pub fn get_oracle_sources(env: &Env) -> Vec<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OracleSources)
+        .unwrap_or(Vec::new(env))
+}
+
+/// Set the list of registered oracle source addresses.
+pub fn set_oracle_sources(env: &Env, sources: &Vec<Address>) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::OracleSources, sources);
+}
+
+/// Get the cached price record for a specific oracle source.
+pub fn get_oracle_source_price(env: &Env, source: &Address) -> Option<CachedOraclePrice> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OracleSourcePrice(source.clone()))
+}
+
+/// Set the cached price record for a specific oracle source. Called when
+/// that source pushes a fresh price via `record_oracle_source_price`.
+pub fn set_oracle_source_price(env: &Env, source: &Address, price: &CachedOraclePrice) {
+    let key = DataKey::OracleSourcePrice(source.clone());
+    env.storage().persistent().set(&key, price);
+    set_or_extend_ttl(env, &key, RecordType::FeeConfig);
+}
+
+/// Get the multi-source oracle aggregation configuration.
+///
+/// Defaults to `{ min_sources: 1, max_deviation_bps: 10_000 }` (any single
+/// fresh registered source suffices, no deviation filtering) when never
+/// explicitly configured, so registering sources works out of the box
+/// before an admin tunes the policy.
+pub fn get_oracle_aggregation_config(env: &Env) -> crate::types::OracleAggregationConfig {
+    env.storage()
+        .persistent()
+        .get(&DataKey::OracleAggregationConfig)
+        .unwrap_or(crate::types::OracleAggregationConfig {
+            min_sources: 1,
+            max_deviation_bps: 10_000,
+        })
+}
+
+/// Set the multi-source oracle aggregation configuration.
+pub fn set_oracle_aggregation_config(env: &Env, config: &crate::types::OracleAggregationConfig) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::OracleAggregationConfig, config);
+}
+
+pub fn is_hook_allowed(env: &Env, hook_contract: &Address) -> bool {
+    let key = DataKey::HookAllowlist(hook_contract.clone());
+    env.storage().persistent().get(&key).unwrap_or(false)
+}
+
+pub fn set_hook_allowed(env: &Env, hook_contract: &Address, allowed: bool) {
+    let key = DataKey::HookAllowlist(hook_contract.clone());
+    if allowed {
+        env.storage().persistent().set(&key, &true);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
 }
 
 pub fn get_registered_hooks(env: &Env) -> Vec<Address> {
@@ -967,12 +1172,24 @@ pub fn has_dispute_vote(env: &Env, commitment: &Bytes, arbiter: &Address) -> boo
     env.storage().persistent().has(&key)
 }
 
-/// Count the number of votes for a disputed escrow.
-pub fn count_dispute_votes(env: &Env, commitment: &Bytes, arbiters: &Vec<Address>) -> u32 {
+/// Count the number of *fresh* votes for a disputed escrow (Issue #865 / SC-W8-04).
+///
+/// A vote only counts toward quorum while `now <= voted_at + vote_ttl_secs`;
+/// a stale vote is silently excluded rather than treated as an error, so a
+/// slow-moving dispute cannot be resolved on long-expired opinions.
+pub fn count_dispute_votes(
+    env: &Env,
+    commitment: &Bytes,
+    arbiters: &Vec<Address>,
+    vote_ttl_secs: u64,
+) -> u32 {
+    let now = env.ledger().timestamp();
     let mut count = 0;
     for arbiter in arbiters.iter() {
-        if has_dispute_vote(env, commitment, &arbiter) {
-            count += 1;
+        if let Some(vote) = get_dispute_vote(env, commitment, &arbiter) {
+            if now <= vote.voted_at.saturating_add(vote_ttl_secs) {
+                count += 1;
+            }
         }
     }
     count

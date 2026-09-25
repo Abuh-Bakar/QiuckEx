@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Put,
+  Post,
   Body,
   Param,
   HttpCode,
@@ -14,19 +15,16 @@ import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { CrashReportDto } from './dto/crash-report.dto';
 import { LogExportDto } from './dto/log-export.dto';
 import { SettingsDto } from './dto/settings.dto';
+import { SubmitIssueReportDto } from './dto/submit-issue-report.dto';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 
-/**
- * Controller for crash reporting and log export endpoints
- */
 @ApiTags('crash-reporting')
 @Controller('crash-reporting')
 export class CrashReportingController {
   constructor(private readonly crashReportingService: CrashReportingService) {}
 
-  /**
-   * Get user's crash reporting settings
-   */
   @Get('settings/:userId')
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: 'Get crash reporting settings for a user' })
   @ApiResponse({
     status: 200,
@@ -57,6 +55,7 @@ export class CrashReportingController {
    * Update user's crash reporting settings
    */
   @Put('settings/:userId')
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update crash reporting settings for a user' })
   @ApiResponse({ status: 200, description: 'Settings updated successfully' })
@@ -75,6 +74,7 @@ export class CrashReportingController {
    * Export logs for support (requires opt-in)
    */
   @Get('export/:userId')
+  @RateLimitTier("export")
   @ApiOperation({ summary: 'Export logs for support' })
   @ApiResponse({
     status: 200,
@@ -106,6 +106,7 @@ export class CrashReportingController {
    * Get crash reports for a user
    */
   @Get('reports/:userId')
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: 'Get crash reports for a user' })
   @ApiResponse({
     status: 200,
@@ -126,5 +127,23 @@ export class CrashReportingController {
       timestamp: report.timestamp,
       createdAt: report.createdAt,
     }));
+  }
+
+  /**
+   * Submit a crash or issue report
+   */
+  @Post('submit')
+  @RateLimitTier("mutation")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Submit a crash or issue report' })
+  @ApiResponse({
+    status: 201,
+    description: 'Crash report submitted successfully',
+  })
+  async submitReport(
+    @Body() dto: SubmitIssueReportDto,
+  ): Promise<{ id: string }> {
+    const reportId = await this.crashReportingService.submitIssueReport(dto);
+    return { id: reportId };
   }
 }

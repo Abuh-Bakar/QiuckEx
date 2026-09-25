@@ -1,14 +1,15 @@
 use crate::errors::QuickexError;
 use crate::events::{
-    publish_admin_changed, publish_contract_initialized, publish_contract_migrated,
-    publish_contract_paused, publish_fee_collector_rotated, publish_per_asset_fee_set,
-    publish_upgrade_completed, publish_upgrade_started,
+    publish_admin_changed, publish_admin_transfer_accepted, publish_admin_transfer_cancelled,
+    publish_admin_transfer_proposed, publish_contract_initialized, publish_contract_migrated,
+    publish_contract_paused, publish_fee_collector_rotated, publish_fee_withdrawn,
+    publish_per_asset_fee_set, publish_upgrade_completed, publish_upgrade_started,
 };
 use crate::fee;
 use crate::fee_router;
 use crate::storage;
-use crate::types::{FeeConfig, PerAssetFeeConfig, Role};
-use soroban_sdk::{Address, Env, Vec};
+use crate::types::{FeeConfig, PendingAdminProposal, PerAssetFeeConfig, Role};
+use soroban_sdk::{token, Address, Env, Vec};
 
 /// Initialize the contract with an admin address.
 ///
@@ -134,11 +135,69 @@ pub fn revoke_role(
     Ok(())
 }
 
-/// Set a new primary admin address (**Admin only**).
-pub fn set_admin(env: &Env, caller: Address, new_admin: Address) -> Result<(), QuickexError> {
+// ─────────────────────────────────────────────────────────────────────────
+// Timelocked Two-Step Admin Transfer (Issue #870)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The contract previously exposed an instant, single-call `set_admin` that
+// let a compromised admin key hand over control immediately and
+// irreversibly, with no window for anyone to notice or intervene. That
+// entrypoint has been removed. Admin transfer now ALWAYS goes through this
+// propose -> (wait out the timelock) -> accept flow, with cancellation
+// available to the current admin at any point before acceptance. There is
+// no faster path left that bypasses the delay.
+
+/// Propose a new admin, subject to a caller-chosen timelock (**Admin only**).
+///
+/// `delay_secs` must be at least [`storage::MIN_ADMIN_TRANSFER_DELAY`]; shorter
+/// values are rejected so the timelock can't be trivially bypassed. Overwrites
+/// any existing pending proposal. Emits `AdminTransferProposed`.
+pub fn propose_admin_transfer(
+    env: &Env,
+    caller: Address,
+    new_admin: Address,
+    delay_secs: u64,
+) -> Result<(), QuickexError> {
     require_admin(env, &caller)?;
 
-    let old_admin = storage::get_admin(env).unwrap();
+    if delay_secs < storage::MIN_ADMIN_TRANSFER_DELAY {
+        return Err(QuickexError::InvalidTimeout);
+    }
+
+    let eligible_at = env.ledger().timestamp().saturating_add(delay_secs);
+    let proposal = PendingAdminProposal {
+        proposed_admin: new_admin.clone(),
+        proposed_by: caller.clone(),
+        eligible_at,
+    };
+    storage::set_pending_admin_proposal(env, &proposal);
+
+    publish_admin_transfer_proposed(env, caller, new_admin, eligible_at);
+    Ok(())
+}
+
+/// Accept a pending admin-transfer proposal once its timelock has elapsed.
+///
+/// Must be called by the exact address named in the proposal. Performs the
+/// admin/role handover in a single atomic step and clears the proposal.
+/// Emits `AdminTransferAccepted`.
+pub fn accept_admin_transfer(env: &Env, caller: Address) -> Result<(), QuickexError> {
+    caller.require_auth();
+
+    let proposal =
+        storage::get_pending_admin_proposal(env).ok_or(QuickexError::NoPendingAdminProposal)?;
+
+    if proposal.proposed_admin != caller {
+        return Err(QuickexError::InvalidAcceptor);
+    }
+
+    if env.ledger().timestamp() < proposal.eligible_at {
+        return Err(QuickexError::AdminTimelockNotElapsed);
+    }
+
+    let old_admin = storage::get_admin(env).ok_or(QuickexError::Unauthorized)?;
+    let new_admin = proposal.proposed_admin;
+
     storage::set_admin(env, &new_admin);
 
     // Revoke Admin role from old admin.
@@ -158,8 +217,35 @@ pub fn set_admin(env: &Env, caller: Address, new_admin: Address) -> Result<(), Q
         storage::set_roles(env, &new_admin, &roles);
     }
 
+    storage::clear_pending_admin_proposal(env);
+
+    publish_admin_transfer_accepted(env, old_admin.clone(), new_admin.clone());
+    // Also emit the general AdminChanged event so existing indexers built
+    // around `set_admin` keep working for this path too.
     publish_admin_changed(env, old_admin, new_admin);
     Ok(())
+}
+
+/// Cancel a pending admin-transfer proposal (**current Admin only**).
+///
+/// Any admin may cancel, not just the original proposer — this matters if
+/// role membership changed since the proposal was made. Emits
+/// `AdminTransferCancelled`.
+pub fn cancel_admin_transfer(env: &Env, caller: Address) -> Result<(), QuickexError> {
+    require_admin(env, &caller)?;
+
+    let proposal =
+        storage::get_pending_admin_proposal(env).ok_or(QuickexError::NoPendingAdminProposal)?;
+
+    storage::clear_pending_admin_proposal(env);
+
+    publish_admin_transfer_cancelled(env, caller, proposal.proposed_admin);
+    Ok(())
+}
+
+/// Get the currently pending admin-transfer proposal, if any.
+pub fn get_pending_admin_transfer(env: &Env) -> Option<PendingAdminProposal> {
+    storage::get_pending_admin_proposal(env)
 }
 
 /// Set the paused state (**Admin or Operator only**).
@@ -217,13 +303,15 @@ pub fn migrate(env: &Env, caller: &Address) -> Result<u32, QuickexError> {
         return Err(QuickexError::InvalidContractVersion);
     }
 
-    let mut version = from_version;
-    while version < storage::CURRENT_CONTRACT_VERSION {
-        version = match version {
-            storage::LEGACY_CONTRACT_VERSION => migrate_legacy_to_v1(env),
-            _ => return Err(QuickexError::InvalidContractVersion),
-        };
-    }
+    // SC-W8-10 (Issue #871): apply every registered step from `from_version`
+    // up to `CURRENT_CONTRACT_VERSION`, in order, via the versioned
+    // migration registry. `?` propagates a mid-chain step failure as-is —
+    // Soroban rolls back every write this invocation made (including any
+    // earlier steps that already ran), so state is left at `from_version`,
+    // never partially migrated. See `migration.rs` for the registry and
+    // `upgrade_harness_failed_migration_leaves_version_at_prior_value` in
+    // `upgrade_test.rs` for the end-to-end proof.
+    let version = crate::migration::run(env, from_version, storage::CURRENT_CONTRACT_VERSION)?;
 
     if version != from_version {
         publish_contract_migrated(env, caller, from_version, version);
@@ -235,12 +323,6 @@ pub fn migrate(env: &Env, caller: &Address) -> Result<u32, QuickexError> {
     }
 
     Ok(version)
-}
-
-fn migrate_legacy_to_v1(env: &Env) -> u32 {
-    storage::set_contract_version(env, storage::CURRENT_CONTRACT_VERSION);
-    storage::set_initialized(env, true);
-    storage::CURRENT_CONTRACT_VERSION
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -441,4 +523,56 @@ pub fn rotate_fee_collector(
     let next_index = fee_router::rotate_collector(env, &new_collector);
     publish_fee_collector_rotated(env, new_collector, next_index);
     Ok(next_index)
+}
+
+/// Withdraw accrued protocol fees for `token` to `recipient` (**Admin only**;
+/// Issue #866 / SC-W8-05).
+///
+/// Draws exclusively from the accrued-fee treasury ledger
+/// (`storage::AccruedFees`), which is only ever credited from the
+/// platform-fee portion of a settlement that had no configured collector to
+/// forward to (see `fee_router::route_payout*`). Escrowed principal is never
+/// credited to this ledger, so a withdrawal can never touch it — enforced
+/// structurally, not just by convention.
+///
+/// # Errors
+/// - [`QuickexError::InvalidAmount`] – `amount` is zero or negative.
+/// - [`QuickexError::Overpayment`] – `amount` exceeds the token's accrued
+///   balance (reused here rather than a dedicated variant — see the
+///   capacity note on [`QuickexError`]).
+/// - [`QuickexError::InsufficientRole`] – caller is not admin.
+pub fn withdraw_fees(
+    env: &Env,
+    caller: &Address,
+    token: Address,
+    amount: i128,
+    recipient: Address,
+) -> Result<(), QuickexError> {
+    require_admin(env, caller)?;
+
+    if amount <= 0 {
+        return Err(QuickexError::InvalidAmount);
+    }
+
+    storage::subtract_accrued_fee(env, &token, amount)?;
+
+    let token_client = token::Client::new(env, &token);
+    token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+    publish_fee_withdrawn(env, token, caller.clone(), amount, recipient);
+    Ok(())
+}
+
+/// Set whether a hook contract is allowed to be registered (**Admin only**).
+pub fn set_hook_allowed(
+    env: &Env,
+    caller: &Address,
+    hook_contract: Address,
+    allowed: bool,
+) -> Result<(), QuickexError> {
+    require_admin(env, caller)?;
+
+    storage::set_hook_allowed(env, &hook_contract, allowed);
+    crate::events::publish_hook_allowlist_changed(env, hook_contract, allowed);
+    Ok(())
 }

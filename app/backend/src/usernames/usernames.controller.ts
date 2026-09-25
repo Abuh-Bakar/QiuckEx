@@ -11,7 +11,6 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-// import { RateLimitGroup } from "../config/rate-limit.config";
 import {
   ApiBody,
   ApiOperation,
@@ -19,8 +18,6 @@ import {
   ApiResponse,
   ApiTags,
 } from "@nestjs/swagger";
-import { EventEmitter2 } from "@nestjs/event-emitter";
-
 import {
   CreateUsernameDto,
   CreateUsernameResponseDto,
@@ -37,6 +34,7 @@ import {
   PublicProfileDto,
 } from "../dto";
 import { UsernamesService } from "./usernames.service";
+import { RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 import {
   UsernameConflictError,
   UsernameLimitExceededError,
@@ -49,10 +47,11 @@ import {
 export class UsernamesController {
   constructor(
     private readonly usernamesService: UsernamesService,
-    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   @Post()
+  @RateLimitTier("mutation")
+  @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @ApiOperation({
     summary: "Create a new username",
     description:
@@ -80,6 +79,10 @@ export class UsernamesController {
   @ApiResponse({
     status: 403,
     description: "Wallet has reached the maximum allowed usernames",
+  })
+  @ApiResponse({
+    status: 429,
+    description: "Rate limit exceeded – retry after 60 seconds",
   })
   async createUsername(
     @Body() body: CreateUsernameDto,
@@ -109,16 +112,14 @@ export class UsernamesController {
       throw err;
     }
 
-    this.eventEmitter.emit("username.claimed", {
-      username: body.username,
-      publicKey: body.publicKey,
-      timestamp: new Date().toISOString(),
-    });
-
+    // The `username.claimed` event is now written to the transactional outbox
+    // inside the claim transaction and dispatched at-least-once by the outbox
+    // dispatcher, guaranteeing delivery even if this process dies before emit.
     return { ok: true };
   }
 
   @Get()
+  @RateLimitTier("public-read")
   @ApiOperation({
     summary: "List usernames for a wallet",
     description:
@@ -148,6 +149,7 @@ export class UsernamesController {
   }
 
   @Get("search")
+  @RateLimitTier("search")
   @Throttle({ default: { limit: 20, ttl: 60000 } }) // 20 requests per minute
   @ApiOperation({
     summary: "Search public profiles",
@@ -207,6 +209,7 @@ export class UsernamesController {
   }
 
   @Get("trending")
+  @RateLimitTier("search")
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @ApiOperation({
     summary: "Get trending creators",
@@ -262,6 +265,7 @@ export class UsernamesController {
   }
 
   @Get("recently-active")
+  @RateLimitTier("search")
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @ApiOperation({
     summary: "Get recently active users",
@@ -317,6 +321,7 @@ export class UsernamesController {
   }
 
   @Get("featured")
+  @RateLimitTier("search")
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @ApiOperation({
     summary: "Get featured creators",
@@ -363,6 +368,8 @@ export class UsernamesController {
   }
 
   @Post("toggle-public")
+  @RateLimitTier("mutation")
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @ApiOperation({
     summary: "Toggle public profile visibility",
     description:
@@ -423,6 +430,7 @@ export class UsernamesController {
   }
 
   @Get(":username")
+  @RateLimitTier("public-read")
   @ApiOperation({
     summary: "Get profile by username",
     description: "Returns profile details for a given username. " +

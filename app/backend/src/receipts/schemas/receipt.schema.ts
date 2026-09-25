@@ -5,11 +5,11 @@
  * Location: app/backend/src/receipts/schemas/receipt.schema.ts
  */
 
-export type ReceiptType = 'payment' | 'refund' | 'contract_action';
+export type ReceiptType = "payment" | "refund" | "contract_action";
 
-export type ReceiptStatus = 'success' | 'pending' | 'failed';
+export type ReceiptStatus = "success" | "pending" | "failed";
 
-export type AssetType = 'native' | 'credit_alphanum4' | 'credit_alphanum12';
+export type AssetType = "native" | "credit_alphanum4" | "credit_alphanum12";
 
 /** Stable, deterministic receipt ID derived from tx hash + operation index */
 export interface ReceiptId {
@@ -56,6 +56,8 @@ export interface ContractMeta {
     ledgerReads: number;
     ledgerWrites: number;
   } | null;
+  /** Receipt reference from contract event for deterministic receipt generation (SC-W7-07) */
+  receiptReference?: string;
 }
 
 export interface DiagnosticMeta {
@@ -76,10 +78,23 @@ export interface DiagnosticMeta {
 export interface NormalizedReceipt {
   // ── Identity ─────────────────────────────────────────────────────────────
   receiptId: string;
+  /**
+   * Deterministic receipt hash derived from canonical transaction data.
+   * Same canonical inputs always produce the same hash (SHA-256).
+   * Format: `rch_<64 hex chars>`
+   * Stable across retries; safe for indexer and support-tool references.
+   */
+  receiptHash: string;
   txHash: string;
   operationIndex: number;
   type: ReceiptType;
   status: ReceiptStatus;
+  /**
+   * Deterministic on-chain receipt reference emitted by the QuickEx contract
+   * (schema v3+). Populated by the indexer/ingestion layer when the contract
+   * event is available; null for payments/legacy events.
+   */
+  receiptReference: string | null;
 
   // ── Stable timestamps ────────────────────────────────────────────────────
   /** ISO-8601; ledger close time (success/pending) or submission time (failed) */
@@ -101,7 +116,7 @@ export interface NormalizedReceipt {
   displayAmount: string;
   /** Optional memo attached to the transaction */
   memo: string | null;
-  memoType: 'text' | 'id' | 'hash' | 'return' | 'none';
+  memoType: "text" | "id" | "hash" | "return" | "none";
 
   // ── Fees ─────────────────────────────────────────────────────────────────
   fee: FeeMetadata;
@@ -113,7 +128,7 @@ export interface NormalizedReceipt {
   diagnostic: DiagnosticMeta;
 
   // ── Network ──────────────────────────────────────────────────────────────
-  network: 'testnet' | 'mainnet';
+  network: "testnet" | "mainnet";
   /** Horizon/Soroban RPC explorer URL */
   explorerUrl: string;
 }

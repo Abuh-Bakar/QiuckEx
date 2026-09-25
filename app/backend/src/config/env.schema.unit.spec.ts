@@ -204,6 +204,112 @@ describe("Environment Schema Validation", () => {
   });
 });
 
+describe("OpenTelemetry tracing configuration (BE-113)", () => {
+  const validEnv = {
+    PORT: 4000,
+    NETWORK: "testnet",
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_ANON_KEY: "test-anon-key-12345",
+    NODE_ENV: "development",
+  };
+
+  it("applies sane defaults when no OTEL_* vars are set", () => {
+    const { error, value } = envSchema.validate(validEnv);
+
+    expect(error).toBeUndefined();
+    expect(value.OTEL_SERVICE_NAME).toBe("quickex-backend");
+    expect(value.OTEL_TRACE_SAMPLE_RATE).toBe(0.1);
+    expect(value.OTEL_DEBUG).toBe(false);
+    expect(value.OTEL_ENABLED).toBeUndefined();
+  });
+
+  it("accepts an explicit sample rate within 0..1", () => {
+    const env = { ...validEnv, OTEL_TRACE_SAMPLE_RATE: 0.5 };
+    const { error, value } = envSchema.validate(env);
+
+    expect(error).toBeUndefined();
+    expect(value.OTEL_TRACE_SAMPLE_RATE).toBe(0.5);
+  });
+
+  it("rejects a sample rate outside 0..1", () => {
+    const env = { ...validEnv, OTEL_TRACE_SAMPLE_RATE: 1.5 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("OTEL_TRACE_SAMPLE_RATE");
+  });
+
+  it("accepts OTEL_ENABLED as a boolean toggle", () => {
+    const enabled = envSchema.validate({ ...validEnv, OTEL_ENABLED: "false" });
+    expect(enabled.error).toBeUndefined();
+    expect(enabled.value.OTEL_ENABLED).toBe(false);
+
+    const disabled = envSchema.validate({ ...validEnv, OTEL_ENABLED: "true" });
+    expect(disabled.error).toBeUndefined();
+    expect(disabled.value.OTEL_ENABLED).toBe(true);
+  });
+
+  it("rejects a non-HTTP(S) OTLP exporter endpoint", () => {
+    const env = {
+      ...validEnv,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "ftp://collector.internal:4318",
+    };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("OTEL_EXPORTER_OTLP_ENDPOINT");
+  });
+});
+
+describe("Ingestion lag health guard configuration", () => {
+  const validEnv = {
+    PORT: 4000,
+    NETWORK: "testnet",
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_ANON_KEY: "test-anon-key-12345",
+    NODE_ENV: "development",
+  };
+
+  it("defaults the ingestion lag threshold to 300 seconds", () => {
+    const { error, value } = envSchema.validate(validEnv);
+
+    expect(error).toBeUndefined();
+    expect(value.INGESTION_LAG_THRESHOLD_SECONDS).toBe(300);
+  });
+
+  it("accepts an explicit positive integer threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 900 };
+    const { error, value } = envSchema.validate(env);
+
+    expect(error).toBeUndefined();
+    expect(value.INGESTION_LAG_THRESHOLD_SECONDS).toBe(900);
+  });
+
+  it("rejects a threshold of zero", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 0 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+
+  it("rejects a negative threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: -1 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+
+  it("rejects a fractional threshold", () => {
+    const env = { ...validEnv, INGESTION_LAG_THRESHOLD_SECONDS: 1.5 };
+    const { error } = envSchema.validate(env);
+
+    expect(error).toBeDefined();
+    expect(error?.message).toContain("INGESTION_LAG_THRESHOLD_SECONDS");
+  });
+});
+
 it("rejects unknown environment variables when strict validation enabled", () => {
   const result = envSchema.validate(
     {

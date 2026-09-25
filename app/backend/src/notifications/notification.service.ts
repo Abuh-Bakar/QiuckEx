@@ -20,6 +20,9 @@ import type {
   UsernameClaimedPayload,
   AutoReconciliationSucceededNotificationPayload,
   PaymentLinkExpiredPayload,
+  ExportCompletedPayload,
+  ExportFailedPayload,
+  RecurringPaymentDuePayload,
 } from "./types/notification.types";
 
 import {
@@ -43,6 +46,23 @@ import { InAppNotificationRepository } from "./in-app-notification.repository";
 import { TemplateVersionService } from "./template-versioning/template-version.service";
 
 const MAX_ATTEMPTS = 3;
+
+/** Outcome of a single channel delivery attempt. */
+export interface ChannelDeliveryResult {
+  /** Whether the notification reached (or was already delivered to) the channel. */
+  ok: boolean;
+  /** Populated when the delivery did not succeed. */
+  error?: string;
+  /** Provider message id when available. */
+  messageId?: string;
+}
+
+/** Outcome of an export email delivery request. */
+export interface ExportEmailDeliveryResult {
+  delivered: boolean;
+  templateVersionId?: string;
+  error?: string;
+}
 
 @Injectable()
 export class NotificationService implements OnModuleInit {
@@ -233,6 +253,47 @@ export class NotificationService implements OnModuleInit {
     await this.dispatch(payload);
   }
 
+  @OnEvent("recurring.payment.due", { async: true })
+  async onRecurringPaymentDue(event: {
+    linkId: string;
+    executionId: string;
+    recipientPublicKey?: string;
+    username?: string;
+    destination?: string;
+    amount: number;
+    asset: string;
+    periodNumber: number;
+    scheduledAt?: string;
+  }): Promise<void> {
+    const recipientPublicKey = event.recipientPublicKey || event.destination || (event.username ? `user:${event.username}` : undefined);
+    if (!recipientPublicKey) return;
+
+    const payload: RecurringPaymentDuePayload = {
+      eventType: "recurring.payment.due",
+      eventId: `recurring-due:${event.executionId}`,
+      recipientPublicKey,
+      title: "Upcoming Recurring Payment",
+      body: `Your recurring payment of ${event.amount} ${event.asset} is scheduled to execute soon.`,
+      occurredAt: new Date().toISOString(),
+      linkId: event.linkId,
+      executionId: event.executionId,
+      username: event.username,
+      destination: event.destination,
+      amount: event.amount,
+      asset: event.asset,
+      periodNumber: event.periodNumber,
+      scheduledAt: event.scheduledAt || new Date().toISOString(),
+      metadata: {
+        linkId: event.linkId,
+        executionId: event.executionId,
+        amount: event.amount,
+        asset: event.asset,
+      },
+    };
+
+    await this.dispatch(payload);
+  }
+
   // ---------------------------------------------------------------------------
   // CORE DISPATCH (UPDATED WITH TEMPLATE)
   // ---------------------------------------------------------------------------
@@ -288,7 +349,7 @@ export class NotificationService implements OnModuleInit {
     pref: NotificationPreference,
     payload: NotificationPayload,
     templateVersionId?: string,
-  ): Promise<void> {
+  ): Promise<ChannelDeliveryResult> {
     const { publicKey, channel } = pref;
     const { eventType, eventId } = payload;
 
@@ -299,9 +360,14 @@ export class NotificationService implements OnModuleInit {
       eventId,
     );
 
-    if (alreadySent) return;
+    if (alreadySent) return { ok: true };
 
-    if (!this.rateLimiter.allow(publicKey, channel)) return;
+    if (!this.rateLimiter.allow(publicKey, channel)) {
+      return {
+        ok: false,
+        error: `Rate limit exceeded for ${publicKey} on channel ${channel}`,
+      };
+    }
 
     // ✅ IN-APP CHANNEL
     if (channel === "in_app") {
@@ -320,27 +386,30 @@ export class NotificationService implements OnModuleInit {
         });
 
         await this.logRepo.markSent(publicKey, channel, eventType, eventId);
+        return { ok: true };
       } catch (err) {
+        const message = (err as Error).message;
         await this.logRepo.markFailed(
           publicKey,
           channel,
           eventType,
           eventId,
-          (err as Error).message,
+          message,
         );
+        return { ok: false, error: message };
       }
-
-      return;
     }
 
     // webhook async handling
     if (channel === "webhook" && this.jobQueueService) {
       await this.enqueueWebhookJob(pref, payload, templateVersionId);
-      return;
+      return { ok: true };
     }
 
     const provider = this.providerMap.get(channel);
-    if (!provider) return;
+    if (!provider) {
+      return { ok: false, error: `No provider registered for channel ${channel}` };
+    }
 
     await this.logRepo.createPending(publicKey, channel, eventType, eventId, templateVersionId);
     await this.logRepo.createPending(publicKey, channel, eventType, eventId, payload.previewScope);
@@ -357,15 +426,118 @@ export class NotificationService implements OnModuleInit {
         result.httpStatus,
         result.responseBody,
       );
+
+      return { ok: true, messageId: result.messageId };
     } catch (err) {
+      const message = (err as Error).message;
       await this.logRepo.markFailed(
         publicKey,
         channel,
         eventType,
         eventId,
-        (err as Error).message,
+        message,
       );
+      return { ok: false, error: message };
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // EXPORT EMAIL DELIVERY (BE-101)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deliver a completed-export notification email.
+   *
+   * Routes through the existing notifications pipeline: the recipient's enabled
+   * email preference is resolved, the active versioned template for
+   * `export.completed` is rendered, and the configured email provider sends it.
+   *
+   * Unlike {@link dispatch}, this returns the delivery outcome so callers
+   * (e.g. the export generation job handler) can surface failures instead of
+   * having them swallowed.
+   */
+  async deliverExportEmail(
+    payload: ExportCompletedPayload,
+  ): Promise<ExportEmailDeliveryResult> {
+    let emailPref: NotificationPreference | undefined;
+
+    try {
+      const preferences = await this.prefsRepo.getEnabledPreferences(
+        payload.recipientPublicKey,
+      );
+      emailPref = preferences.find((pref) => pref.channel === "email");
+    } catch (err) {
+      const message = `Failed to load notification preferences: ${(err as Error).message}`;
+      this.logger.error(message);
+      return { delivered: false, error: message };
+    }
+
+    if (!emailPref || !emailPref.email) {
+      return {
+        delivered: false,
+        error: `No enabled email channel preference with an email address found for ${payload.recipientPublicKey}`,
+      };
+    }
+
+    const renderedTemplate =
+      await this.templateVersionService.renderActiveTemplateForEventType(
+        payload.eventType,
+        payload as unknown as Record<string, unknown>,
+      );
+
+    const templatedPayload: ExportCompletedPayload = renderedTemplate
+      ? { ...payload, title: renderedTemplate.title, body: renderedTemplate.body }
+      : payload;
+
+    const result = await this.sendToChannel(
+      emailPref,
+      templatedPayload,
+      renderedTemplate?.templateVersionId,
+    );
+
+    return {
+      delivered: result.ok,
+      templateVersionId: renderedTemplate?.templateVersionId,
+      error: result.error,
+    };
+  }
+
+  /**
+   * Notify the requesting user that their export job has permanently failed.
+   *
+   * Dispatches an `export.failed` notification through the standard
+   * multi-channel pipeline so user preferences (email, in-app, etc.) are
+   * respected.  The `failureReason` field is sanitised by the caller and must
+   * never contain raw stack traces or internal error messages.
+   *
+   * @param userId - Stellar public key of the user who requested the export.
+   * @param jobId - ID of the failed export generation job.
+   * @param exportType - The type of data (transactions, links, payments).
+   * @param format - The requested output format (csv or json).
+   * @param failureReason - A user-safe description of why the export failed.
+   */
+  async notifyExportFailed(
+    userId: string,
+    jobId: string,
+    exportType: string,
+    format: string,
+    failureReason: string,
+  ): Promise<void> {
+    const payload: ExportFailedPayload = {
+      eventType: "export.failed",
+      eventId: `export-failed:${jobId}`,
+      recipientPublicKey: userId,
+      title: `Your ${exportType} export failed`,
+      body: `We were unable to generate your ${format.toUpperCase()} export. ${failureReason}`,
+      occurredAt: new Date().toISOString(),
+      exportType,
+      format,
+      jobId,
+      failureReason,
+      metadata: { jobId, exportType, format, failureReason },
+    };
+
+    await this.dispatch(payload);
   }
 
   // ---------------------------------------------------------------------------

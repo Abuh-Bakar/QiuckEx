@@ -207,6 +207,36 @@ pub struct OracleFeeConfig {
     pub stale_threshold_secs: u64,
 }
 
+/// A cached oracle price record with its timestamp for staleness checking.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CachedOraclePrice {
+    /// Price in microdollars per token unit (1_000_000 = 1 USD).
+    pub price_micros: i128,
+    /// Ledger timestamp when this price was recorded.
+    pub recorded_at: u64,
+}
+
+/// Multi-source oracle aggregation configuration (SC-W8-06 / Issue #867).
+///
+/// Controls how [`crate::oracle::fetch_aggregated_price`] combines the
+/// registered oracle sources' individually-cached prices into a single
+/// trusted price: fresh sources (per the existing staleness guard) are
+/// combined via median, sources deviating beyond `max_deviation_bps` from
+/// that median are excluded, and the result fails closed with
+/// `OracleInsufficientSources` if fewer than `min_sources` remain.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleAggregationConfig {
+    /// Minimum number of fresh, non-outlier sources required for a valid
+    /// aggregated price. Must be at least 1.
+    pub min_sources: u32,
+    /// Maximum allowed deviation from the median, in basis points
+    /// (10_000 = 100%). A source priced further from the median than this
+    /// is excluded from the final price.
+    pub max_deviation_bps: u32,
+}
+
 /// Deployment metadata returned by [`crate::QuickexContract::get_deployment_metadata`].
 ///
 /// Clients and indexers can call this view to validate compatibility without
@@ -251,6 +281,31 @@ pub enum HookEventKind {
     Refund = 3,
 }
 
+/// Canonical hook invocation failure/skip reason codes (SC-W7-05).
+///
+/// Emitted on [`crate::events::HookInvocationFailedEvent`] and
+/// [`crate::events::HookInvocationSkippedEvent`]. Stable across releases —
+/// never renumber or remove an existing variant, only append new ones.
+/// Off-chain indexers and dashboards key on these numeric values, so a
+/// reorder would silently reclassify past events.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u32)]
+pub enum HookFailureReason {
+    /// The hook contract's `on_escrow_event` call aborted — it panicked,
+    /// trapped, or exceeded a resource limit. Corresponds to
+    /// `InvokeError::Abort` (or an `InvokeError::Contract` code that never
+    /// reached a decodable contract error) from `try_invoke_contract`.
+    InvocationAborted = 1,
+    /// The hook contract ran to completion but returned an explicit
+    /// contract error instead of succeeding.
+    ContractError = 2,
+    /// The hook was not invoked at all because `invoke_hooks` was entered
+    /// while the reentrancy guard was already held. Every hook registered
+    /// for this event was skipped, not just one.
+    ReentrancyGuardActive = 3,
+}
+
 /// Privileged roles for contract governance and operations.
 #[contracttype]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -275,4 +330,21 @@ pub enum PauseReason {
     FeatureUpgrade = 3,
     RegulatoryCompliance = 4,
     OperatorIntervention = 5,
+}
+
+/// A pending, timelocked admin transfer.
+///
+/// Stored under [`DataKey::PendingAdminProposal`](crate::storage::DataKey::PendingAdminProposal)
+/// (singleton) while a proposal is outstanding. Cleared on accept or cancel.
+#[contracttype]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PendingAdminProposal {
+    /// Address proposed to become the new admin.
+    pub proposed_admin: Address,
+    /// Admin address that created the proposal (informational only — any
+    /// current admin, not just this address, may cancel the proposal via
+    /// `cancel_admin_transfer`).
+    pub proposed_by: Address,
+    /// Ledger timestamp at which `accept_admin_transfer` becomes callable.
+    pub eligible_at: u64,
 }

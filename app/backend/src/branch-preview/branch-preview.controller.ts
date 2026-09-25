@@ -24,12 +24,14 @@ import { Request } from 'express';
 
 interface AuthenticatedRequest extends Request {
   user?: { id: string };
+  apiKey?: { id: string; scopes: string[] };
   correlationId?: string;
 }
 
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { RequireScopes } from '../auth/decorators/require-scopes.decorator';
-import { RateLimitGroupTag } from '../auth/decorators/rate-limit-group.decorator';
+import { RequireAnyScope } from '../auth/decorators/require-any-scope.decorator';
+import { RateLimitGroupTag, RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import { BranchPreviewService } from './branch-preview.service';
 import { BranchPreviewResponseDto } from './branch-preview.model';
 import {
@@ -52,6 +54,7 @@ export class BranchPreviewController {
 
   // Public endpoint to get preview environment for a branch
   @Get('preview/:branchName')
+  @RateLimitTier('public-read')
   @RateLimitGroupTag('public')
   @ApiOperation({
     summary: 'Get preview environment for a branch',
@@ -66,7 +69,8 @@ export class BranchPreviewController {
 
   // Admin endpoints
   @Post('admin/branch-previews')
-  @RequireScopes('admin')
+  @RateLimitTier('mutation')
+  @RequireAnyScope('admin', 'branch_preview:owner', 'branch_preview:reviewer')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
@@ -77,13 +81,14 @@ export class BranchPreviewController {
     @Body() dto: CreateBranchPreviewRequestDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const actorId = req.user?.id || 'unknown';
+    const actorId = req.user?.id || req.apiKey?.id || 'unknown';
     const requestId = req.correlationId;
     return this.branchPreviewService.createPreview(dto, actorId, requestId);
   }
 
   @Put('admin/branch-previews/:id')
-  @RequireScopes('admin')
+  @RateLimitTier('mutation')
+  @RequireAnyScope('admin', 'branch_preview:owner', 'branch_preview:reviewer')
   @RateLimitGroupTag('authenticated')
   @ApiOperation({
     summary: 'Update an existing branch preview mapping',
@@ -94,13 +99,15 @@ export class BranchPreviewController {
     @Body() dto: UpdateBranchPreviewRequestDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const actorId = req.user?.id || 'unknown';
+    const actorId = req.user?.id || req.apiKey?.id || 'unknown';
+    const scopes = req.apiKey?.scopes || [];
     const requestId = req.correlationId;
-    return this.branchPreviewService.updatePreview(id, dto, actorId, requestId);
+    return this.branchPreviewService.updatePreview(id, dto, actorId, scopes, requestId);
   }
 
   @Delete('admin/branch-previews/:id')
-  @RequireScopes('admin')
+  @RateLimitTier('mutation')
+  @RequireAnyScope('admin', 'branch_preview:owner', 'branch_preview:reviewer')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
@@ -111,13 +118,15 @@ export class BranchPreviewController {
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
   ) {
-    const actorId = req.user?.id || 'unknown';
+    const actorId = req.user?.id || req.apiKey?.id || 'unknown';
+    const scopes = req.apiKey?.scopes || [];
     const requestId = req.correlationId;
-    return this.branchPreviewService.deletePreview(id, actorId, requestId);
+    return this.branchPreviewService.deletePreview(id, actorId, scopes, requestId);
   }
 
   @Get('admin/branch-previews')
-  @RequireScopes('admin')
+  @RateLimitTier('public-read')
+  @RequireAnyScope('admin', 'branch_preview:owner', 'branch_preview:reviewer')
   @RateLimitGroupTag('authenticated')
   @ApiOperation({
     summary: 'List all branch preview mappings',
@@ -131,7 +140,8 @@ export class BranchPreviewController {
   }
 
   @Post('admin/branch-previews/:branchName/invalidate-cache')
-  @RequireScopes('admin')
+  @RateLimitTier('mutation')
+  @RequireAnyScope('admin', 'branch_preview:owner', 'branch_preview:reviewer')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -142,13 +152,15 @@ export class BranchPreviewController {
     @Param('branchName') branchName: string,
     @Req() req: AuthenticatedRequest,
   ) {
-    const actorId = req.user?.id || 'unknown';
+    const actorId = req.user?.id || req.apiKey?.id || 'unknown';
+    const scopes = req.apiKey?.scopes || [];
     const requestId = req.correlationId;
-    const success = await this.branchPreviewService.invalidateCache(branchName, actorId, requestId);
+    const success = await this.branchPreviewService.invalidateCache(branchName, actorId, scopes, requestId);
     return { success };
   }
 
   @Post('admin/branch-previews/cache/clear')
+  @RateLimitTier('mutation')
   @RequireScopes('admin')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.OK)
@@ -165,6 +177,7 @@ export class BranchPreviewController {
 
   @Post('admin/branch-previews/cleanup-expired')
   @RequireScopes('admin')
+  @RateLimitTier('mutation')
   @RateLimitGroupTag('authenticated')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

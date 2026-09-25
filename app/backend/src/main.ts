@@ -1,3 +1,7 @@
+// OpenTelemetry MUST be imported before everything else so it can patch
+// http/express/undici before those modules are required elsewhere.
+import "./tracing/tracing";
+
 // Sentry instrumentation MUST be imported before everything else
 import "./sentry/instrument";
 
@@ -76,6 +80,7 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule, {
     logger: WinstonModule.createLogger(winstonConfig),
+    rawBody: true, // Required for GitHub webhook HMAC signature verification
   });
 
   const configService = app.get(AppConfigService);

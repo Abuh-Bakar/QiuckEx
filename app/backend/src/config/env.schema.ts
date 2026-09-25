@@ -12,6 +12,70 @@ export const envSchema = Joi.object({
     .default(4000)
     .description("Port number for the server"),
 
+  API_BASE_URL: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .optional()
+    .description("Base API URL exposed to frontend via bootstrap endpoint"),
+
+  APP_VERSION: Joi.string()
+    .empty("")
+    .optional()
+    .description("Application release version string"),
+
+  MOBILE_MIN_SUPPORTED_VERSION: Joi.string()
+    .empty("")
+    .default("1.0.0")
+    .description("Minimum mobile app version allowed to use the API"),
+
+  MOBILE_RECOMMENDED_VERSION: Joi.string()
+    .empty("")
+    .default("1.0.0")
+    .description("Mobile app version that should trigger a soft upgrade prompt"),
+
+  MOBILE_LATEST_VERSION: Joi.string()
+    .empty("")
+    .default("1.0.0")
+    .description("Latest mobile app version available in stores"),
+
+  MOBILE_IOS_STORE_URL: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .default("https://apps.apple.com/app/quickex")
+    .description("iOS App Store URL for mobile upgrades"),
+
+  MOBILE_ANDROID_STORE_URL: Joi.string()
+    .empty("")
+    .default("market://details?id=com.pulsefy.quickex")
+    .description("Android Play Store URL for mobile upgrades"),
+
+  MOBILE_RELEASE_NOTES: Joi.string()
+    .empty("")
+    .default("")
+    .description("Pipe-separated mobile release notes for upgrade prompts"),
+
+  ROUTER_CONTRACT_ID: Joi.string()
+    .empty("")
+    .optional()
+    .description("Router Soroban contract address"),
+
+  ALLOWED_TOKENS: Joi.string()
+    .empty("")
+    .optional()
+    .description("Comma-separated list of pre-allowed token addresses"),
+
+  ANCHOR_DIRECTORY_JSON: Joi.string()
+    .empty("")
+    .optional()
+    .description(
+      "JSON array of configured anchor domains and supported country codes",
+    ),
+
+  STELLAR_NETWORK_PASSPHRASE: Joi.string()
+    .empty("")
+    .optional()
+    .description("Explicit Stellar network passphrase override"),
+
   // Network configuration (required)
   NETWORK: Joi.string()
     .valid("testnet", "mainnet")
@@ -91,6 +155,12 @@ export const envSchema = Joi.object({
     .description("Node environment"),
 
   // CORS configuration
+  PUBLIC_API_URL: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .optional()
+    .description("Public API base URL exposed by the runtime config endpoint for client bootstrapping"),
+
   CORS_ALLOWED_ORIGINS: Joi.string()
     .empty("")
     .optional()
@@ -147,6 +217,14 @@ export const envSchema = Joi.object({
     .uri({ scheme: ["http", "https"] })
     .default("https://app.quickex.io")
     .description("Fallback frontend URL for unknown branches"),
+
+  // GitHub branch/PR deployment metadata sync (BE-60)
+  GITHUB_WEBHOOK_SECRET: Joi.string()
+    .empty("")
+    .optional()
+    .description(
+      "Secret used to verify GitHub webhook signatures (X-Hub-Signature-256). When unset, the deployment webhook endpoint returns 503.",
+    ),
 
   FEATURE_FLAGS_BOOTSTRAP_JSON: Joi.string()
     .empty("")
@@ -209,6 +287,34 @@ export const envSchema = Joi.object({
     .default(50)
     .description(
       "Max records per entity type processed per reconciliation run",
+    ),
+
+  // Scheduled reconciliation run + drift alerting (BE-124)
+  RECONCILIATION_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Enable the scheduled reconciliation worker (BE-124)"),
+  RECONCILIATION_CRON_EXPRESSION: Joi.string()
+    .default("*/5 * * * *")
+    .description("Cron expression for scheduled reconciliation runs (BE-124)"),
+  RECONCILIATION_DRIFT_COUNT_THRESHOLD: Joi.number()
+    .integer()
+    .min(0)
+    .default(5)
+    .description(
+      "Payment count discrepancy that raises a drift alert when exceeded (BE-124)",
+    ),
+  RECONCILIATION_DRIFT_AMOUNT_THRESHOLD_STROOPS: Joi.string()
+    .empty("")
+    .default("0")
+    .description(
+      "Payment amount discrepancy (in stroops) that raises a drift alert when exceeded (BE-124)",
+    ),
+  RECONCILIATION_CONSECUTIVE_FAILURE_ALERT_THRESHOLD: Joi.number()
+    .integer()
+    .min(1)
+    .default(3)
+    .description(
+      "Consecutive failed or skipped reconciliation runs that raise an alert (BE-124)",
     ),
 
   // Rate limiting — optional bcrypt-hashed API keys (comma-separated)
@@ -285,10 +391,94 @@ export const envSchema = Joi.object({
     .default(60000)
     .description("Webhook traffic sustained window in milliseconds"),
 
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(20)
+    .description("Tier: public-read burst request limit"),
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: public-read burst window in milliseconds"),
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(60)
+    .description("Tier: public-read sustained request limit"),
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: public-read sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_SEARCH_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(10)
+    .description("Tier: search burst request limit"),
+  RATE_LIMIT_TIER_SEARCH_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: search burst window in milliseconds"),
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(30)
+    .description("Tier: search sustained request limit"),
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: search sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_MUTATION_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(15)
+    .description("Tier: mutation burst request limit"),
+  RATE_LIMIT_TIER_MUTATION_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: mutation burst window in milliseconds"),
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(45)
+    .description("Tier: mutation sustained request limit"),
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: mutation sustained window in milliseconds"),
+
+  RATE_LIMIT_TIER_EXPORT_BURST_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(3)
+    .description("Tier: export burst request limit"),
+  RATE_LIMIT_TIER_EXPORT_BURST_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(10000)
+    .description("Tier: export burst window in milliseconds"),
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_LIMIT: Joi.number()
+    .integer()
+    .min(1)
+    .default(10)
+    .description("Tier: export sustained request limit"),
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_TTL_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(60000)
+    .description("Tier: export sustained window in milliseconds"),
+
   RATE_LIMIT_KEY_ORDER: Joi.string()
-    .default("user_id,api_key,ip")
+    .default("api_key,user_id,ip")
     .description(
-      "Preferred key order for rate-limit identity. Allowed values: user_id,api_key,ip",
+      "Preferred key order for rate-limit identity. Allowed values: api_key,user_id,ip",
     ),
 
   // ---------------------------------------------------------------------------
@@ -387,14 +577,37 @@ export const envSchema = Joi.object({
     .default(false)
     .description("Admin override to disable lag guard temporarily (for emergencies)"),
 
+  // ── Ingestion Lag Health Guard ─────────────────────────────────────────────
+  INGESTION_LAG_THRESHOLD_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .default(300)
+    .description(
+      "Maximum allowed age of the newest ingestion cursor in seconds before /ready reports degraded",
+    ),
+
+  // ── Dead Letter Queue Monitor ────────────────────────────────────────────
+  DLQ_MONITOR_ENABLED: Joi.boolean()
+    .default(true)
+    .description("Whether the dead letter queue depth/age monitor is enabled"),
+  DLQ_ALERT_DEPTH_THRESHOLD: Joi.number()
+    .integer()
+    .min(1)
+    .default(50)
+    .description("Dead letter queue depth (per job type) that triggers an alert"),
+  DLQ_ALERT_AGE_THRESHOLD_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .default(3600000)
+    .description("Age in ms of the oldest dead-lettered job (per job type) that triggers an alert"),
+
   // ── Abuse Signal Configuration ──────────────────────────────────────────
   ABUSE_SIGNAL_RETENTION_DAYS: Joi.number()
     .integer()
     .min(1)
     .max(365)
     .default(90)
-    .description("Days to retain abuse signals before auto-pruning"),
-  ABUSE_SIGNAL_SCORE_THRESHOLD: Joi.number()
+    .description("Days to retain abuse signals before auto-pruning"),  ABUSE_SIGNAL_SCORE_THRESHOLD: Joi.number()
     .integer()
     .min(0)
     .max(100)
@@ -408,6 +621,26 @@ export const envSchema = Joi.object({
     .default("default-abuse-salt")
     .description("Salt for IP/UA hashing in abuse signals"),
 
+  // ── Idempotency Keys (BE-109) ───────────────────────────────────────────
+  IDEMPOTENCY_RETENTION_HOURS: Joi.number()
+    .integer()
+    .min(1)
+    .max(168)
+    .default(24)
+    .description(
+      "How long completed Idempotency-Key records are retained before expiry",
+    ),
+
+  // ── API Key Rotation Overlap (BE-118) ───────────────────────────────────
+  API_KEY_ROTATION_OVERLAP_HOURS: Joi.number()
+    .integer()
+    .min(1)
+    .max(720)
+    .default(24)
+    .description(
+      "Overlap window in hours during which a rotated API key's previous hash remains valid",
+    ),
+
   PREVIEW_INACTIVITY_THRESHOLD_MS: Joi.number()
     .integer()
     .min(0)
@@ -418,6 +651,96 @@ export const envSchema = Joi.object({
     .min(0)
     .default(14 * 24 * 60 * 60 * 1000)
     .description("Maximum age before branch preview auto-expiry"),
+
+  // ── SEP-24 Polling ────────────────────────────────────────────────────────
+  SEP24_STUCK_THRESHOLD_MS: Joi.number()
+    .integer()
+    .min(60000)
+    .default(3600000)
+    .description("Age (ms) after which an in-flight SEP-24 transaction is flagged as stuck (default: 1 hour)"),
+
+  SEP24_MAX_POLL_FAILURES: Joi.number()
+    .integer()
+    .min(1)
+    .max(20)
+    .default(5)
+    .description("Max consecutive poll failures before removing a transaction from the poll queue"),
+
+  SEP24_POLL_BATCH_SIZE: Joi.number()
+    .integer()
+    .min(1)
+    .max(200)
+    .default(50)
+    .description("Max SEP-24 transactions to process per poll cycle"),
+
+  // ── Export artifact storage (BE-102) ─────────────────────────────────────
+  EXPORT_ARTIFACT_TTL_HOURS: Joi.number()
+    .integer()
+    .min(1)
+    .max(720)
+    .default(24)
+    .description(
+      "How long export artifacts are retained in object storage before cleanup (hours, default: 24)",
+    ),
+
+  EXPORT_DOWNLOAD_SECRET: Joi.string()
+    .min(32)
+    .default("change-me-in-production-export-download-secret-32chars")
+    .description(
+      "HMAC-SHA256 secret used to sign and verify export download tokens. " +
+        "Must be at least 32 characters. Rotate by cycling this value.",
+    ),
+
+  // ---------------------------------------------------------------------------
+  // OpenTelemetry distributed tracing (BE-113; optional, defaults to enabled)
+  // ---------------------------------------------------------------------------
+
+  OTEL_ENABLED: Joi.boolean()
+    .optional()
+    .description(
+      "Enable OpenTelemetry tracing. Defaults to true, except NODE_ENV=test.",
+    ),
+
+  OTEL_SERVICE_NAME: Joi.string()
+    .empty("")
+    .default("quickex-backend")
+    .description("Service name reported on traces (service.name resource attribute)"),
+
+  OTEL_SERVICE_VERSION: Joi.string()
+    .empty("")
+    .optional()
+    .description("Service version reported on traces; falls back to APP_VERSION"),
+
+  OTEL_ENVIRONMENT: Joi.string()
+    .empty("")
+    .optional()
+    .description("deployment.environment.name resource attribute; falls back to NODE_ENV"),
+
+  OTEL_EXPORTER_OTLP_ENDPOINT: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .optional()
+    .description(
+      "Base OTLP endpoint; /v1/traces is appended. Default: http://localhost:4318/v1/traces",
+    ),
+
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: Joi.string()
+    .uri({ scheme: ["http", "https"] })
+    .empty("")
+    .optional()
+    .description("Full OTLP/HTTP traces endpoint; overrides OTEL_EXPORTER_OTLP_ENDPOINT"),
+
+  OTEL_TRACE_SAMPLE_RATE: Joi.number()
+    .min(0)
+    .max(1)
+    .default(0.1)
+    .description(
+      "Root span sampling ratio (0.0-1.0). Kept low by default to keep tracing overhead acceptable under load.",
+    ),
+
+  OTEL_DEBUG: Joi.boolean()
+    .default(false)
+    .description("Enable verbose OpenTelemetry SDK diagnostic logging"),
 });
 
 /**
@@ -425,6 +748,18 @@ export const envSchema = Joi.object({
  */
 export interface EnvConfig {
   PORT: number;
+  API_BASE_URL?: string;
+  APP_VERSION?: string;
+  MOBILE_MIN_SUPPORTED_VERSION: string;
+  MOBILE_RECOMMENDED_VERSION: string;
+  MOBILE_LATEST_VERSION: string;
+  MOBILE_IOS_STORE_URL: string;
+  MOBILE_ANDROID_STORE_URL: string;
+  MOBILE_RELEASE_NOTES: string;
+  ROUTER_CONTRACT_ID?: string;
+  ALLOWED_TOKENS?: string;
+  ANCHOR_DIRECTORY_JSON?: string;
+  STELLAR_NETWORK_PASSPHRASE?: string;
   NETWORK: "testnet" | "mainnet";
   STELLAR_NETWORK?: "testnet" | "mainnet";
   SUPABASE_URL: string;
@@ -439,9 +774,12 @@ export interface EnvConfig {
   STELLAR_SECRET_KEY?: string;
   STELLAR_PUBLIC_KEY?: string;
   NODE_ENV: "development" | "production" | "test";
+  PUBLIC_API_URL?: string;
+
   CORS_ALLOWED_ORIGINS?: string;
   CORS_VERCEL_PROJECT?: string;
   MAX_USERNAMES_PER_WALLET?: number;
+  GITHUB_WEBHOOK_SECRET?: string;
   CACHE_MAX_ITEMS: number;
   CACHE_TTL_MS: number;
   FEATURE_FLAGS_CACHE_TTL_MS: number;
@@ -453,6 +791,11 @@ export interface EnvConfig {
   SENDGRID_FROM_EMAIL?: string;
   EXPO_ACCESS_TOKEN?: string;
   RECONCILIATION_BATCH_SIZE: number;
+  RECONCILIATION_ENABLED: boolean;
+  RECONCILIATION_CRON_EXPRESSION: string;
+  RECONCILIATION_DRIFT_COUNT_THRESHOLD: number;
+  RECONCILIATION_DRIFT_AMOUNT_THRESHOLD_STROOPS: string;
+  RECONCILIATION_CONSECUTIVE_FAILURE_ALERT_THRESHOLD: number;
   API_KEYS?: string;
   RATE_LIMIT_PUBLIC_BURST_LIMIT: number;
   RATE_LIMIT_PUBLIC_BURST_TTL_MS: number;
@@ -466,6 +809,22 @@ export interface EnvConfig {
   RATE_LIMIT_WEBHOOKS_BURST_TTL_MS: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_LIMIT: number;
   RATE_LIMIT_WEBHOOKS_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_PUBLIC_READ_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_SEARCH_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_SEARCH_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_SEARCH_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_MUTATION_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_MUTATION_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_MUTATION_SUSTAINED_TTL_MS: number;
+  RATE_LIMIT_TIER_EXPORT_BURST_LIMIT: number;
+  RATE_LIMIT_TIER_EXPORT_BURST_TTL_MS: number;
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_LIMIT: number;
+  RATE_LIMIT_TIER_EXPORT_SUSTAINED_TTL_MS: number;
   RATE_LIMIT_KEY_ORDER: string;
   SENTRY_DSN?: string;
   SENTRY_ENVIRONMENT?: string;
@@ -482,10 +841,29 @@ export interface EnvConfig {
   INDEXER_LAG_THRESHOLD_LEDGERS: number;
   INDEXER_LAG_GUARD_ENABLED: boolean;
   INDEXER_LAG_GUARD_OVERRIDE: boolean;
+  INGESTION_LAG_THRESHOLD_SECONDS: number;
+  DLQ_MONITOR_ENABLED: boolean;
+  DLQ_ALERT_DEPTH_THRESHOLD: number;
+  DLQ_ALERT_AGE_THRESHOLD_MS: number;
   ABUSE_SIGNAL_RETENTION_DAYS: number;
   ABUSE_SIGNAL_SCORE_THRESHOLD: number;
   ABUSE_SIGNAL_GEO_ENABLED: boolean;
   ABUSE_SIGNAL_HASH_SALT: string;
+  IDEMPOTENCY_RETENTION_HOURS: number;
+  API_KEY_ROTATION_OVERLAP_HOURS: number;
   PREVIEW_INACTIVITY_THRESHOLD_MS: number;
   PREVIEW_MAX_AGE_MS: number;
+  SEP24_STUCK_THRESHOLD_MS: number;
+  SEP24_MAX_POLL_FAILURES: number;
+  SEP24_POLL_BATCH_SIZE: number;
+  EXPORT_ARTIFACT_TTL_HOURS: number;
+  EXPORT_DOWNLOAD_SECRET: string;
+  OTEL_ENABLED?: boolean;
+  OTEL_SERVICE_NAME: string;
+  OTEL_SERVICE_VERSION?: string;
+  OTEL_ENVIRONMENT?: string;
+  OTEL_EXPORTER_OTLP_ENDPOINT?: string;
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT?: string;
+  OTEL_TRACE_SAMPLE_RATE: number;
+  OTEL_DEBUG: boolean;
 }

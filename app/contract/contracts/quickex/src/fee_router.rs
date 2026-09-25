@@ -29,7 +29,11 @@
 //! new address. Old escrows automatically pay out to the new collector at
 //! settlement time — there is no per-escrow frozen collector.
 //!
-//! Fallback chain: `FeeCollector(index)` → `PlatformWallet` → (no-op if neither set).
+//! Fallback chain: `FeeCollector(index)` → `PlatformWallet` → accrued fee
+//! treasury (Issue #866 / SC-W8-05): if neither is set, the platform portion
+//! is credited to a per-token accrued-fee ledger in the contract's own
+//! storage instead of being transferred anywhere, and becomes withdrawable
+//! via `admin::withdraw_fees` / `QuickexContract::withdraw_fees`.
 //!
 //! ## XLM / SAC consistency
 //!
@@ -106,6 +110,7 @@ pub fn rotate_collector(env: &Env, new_collector: &Address) -> u32 {
 ///
 /// # Safety
 /// If `amount <= 0`, returns `(amount, 0)` without any transfers.
+#[allow(dead_code)]
 pub fn route_payout(
     env: &Env,
     token: &Address,
@@ -143,9 +148,74 @@ pub fn route_payout(
         if platform_fee > 0 {
             if let Some(collector) = active_collector(env) {
                 token_client.transfer(&env.current_contract_address(), &collector, &platform_fee);
+            } else {
+                // No collector configured: retain the platform portion in the
+                // contract as a queryable, admin-withdrawable accrued fee
+                // balance (Issue #866 / SC-W8-05) instead of leaving it
+                // silently unaccounted for in the contract's token balance.
+                storage::add_accrued_fee(env, token, platform_fee);
             }
         }
     }
 
     (net_payout, total_fee)
+}
+
+/// Price-aware payout routing with explicit oracle price validation.
+///
+/// Same payout logic as [`route_payout`] but uses
+/// [`calculate_fee_for_token_price_aware`](crate::fee::calculate_fee_for_token_price_aware)
+/// which REJECTS the transaction when an oracle fee config exists but no fresh
+/// price is available (rather than silently falling back to static bps).
+///
+/// # Errors
+/// Returns [`QuickexError::OracleStalePrice`] or
+/// [`QuickexError::OraclePriceUnavailable`] when oracle is configured but
+/// the price is stale or absent.
+pub fn route_payout_price_aware(
+    env: &Env,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+    arbiter: Option<&Address>,
+) -> Result<(i128, i128), crate::errors::QuickexError> {
+    if amount <= 0 {
+        return Ok((amount, 0));
+    }
+
+    let total_fee = fee::calculate_fee_for_token_price_aware(env, token, amount)?;
+    let net_payout = amount.saturating_sub(total_fee);
+
+    let token_client = token::Client::new(env, token);
+    token_client.transfer(&env.current_contract_address(), recipient, &net_payout);
+
+    if total_fee > 0 {
+        let arbiter_bps = resolve_arbiter_bps(env, token);
+        let arbiter_fee = if arbiter_bps > 0 && arbiter.is_some() {
+            fee::fee_from_bps_floor(total_fee, arbiter_bps)
+        } else {
+            0
+        };
+        let platform_fee = total_fee.saturating_sub(arbiter_fee);
+
+        if arbiter_fee > 0 {
+            if let Some(arb) = arbiter {
+                token_client.transfer(&env.current_contract_address(), arb, &arbiter_fee);
+            }
+        }
+
+        if platform_fee > 0 {
+            if let Some(collector) = active_collector(env) {
+                token_client.transfer(&env.current_contract_address(), &collector, &platform_fee);
+            } else {
+                // No collector configured: retain the platform portion in the
+                // contract as a queryable, admin-withdrawable accrued fee
+                // balance (Issue #866 / SC-W8-05) instead of leaving it
+                // silently unaccounted for in the contract's token balance.
+                storage::add_accrued_fee(env, token, platform_fee);
+            }
+        }
+    }
+
+    Ok((net_payout, total_fee))
 }

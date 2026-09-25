@@ -5,10 +5,19 @@ import { UsernamesService } from '../usernames/usernames.service';
 import { MarketplaceError, MarketplaceErrorCode } from './errors';
 import {
   buildMarketplaceStateHints,
-  MarketplaceListingDetail,
+  buildBidSummary,
   resolveHighBidAmount,
   truncateStellarPublicKey,
 } from './marketplace-listing-detail';
+import { MarketplaceListingDetailDto } from './dto/marketplace-listing-detail.dto';
+import { GetMarketplaceListingsDto } from './dto/get-marketplace-listings.dto';
+import { GetMarketplaceListingsResponseDto } from './dto/marketplace-listing-summary.dto';
+import {
+  attachBidData,
+  DEFAULT_MARKETPLACE_SORT,
+  groupBidsByListingId,
+  resolveSortColumn,
+} from './marketplace-listing-query';
 
 @Injectable()
 export class MarketplaceService {
@@ -53,11 +62,42 @@ export class MarketplaceService {
     }
   }
 
-  async getActiveListings(
-    limit: number = 20,
-    cursor: string | null = null,
-  ): Promise<{ listings: MarketplaceListing[]; total: number; next_cursor: string | null; has_more: boolean }> {
-    return this.supabase.getActiveListings(limit, cursor);
+  async queryListings(
+    query: GetMarketplaceListingsDto,
+  ): Promise<GetMarketplaceListingsResponseDto> {
+    if (
+      query.min_price !== undefined &&
+      query.max_price !== undefined &&
+      query.min_price > query.max_price
+    ) {
+      throw new MarketplaceError(
+        MarketplaceErrorCode.INVALID_PRICE_RANGE,
+        'min_price cannot be greater than max_price',
+      );
+    }
+
+    const { column, ascending } = resolveSortColumn(query.sort ?? DEFAULT_MARKETPLACE_SORT);
+
+    const page = await this.supabase.queryActiveListings({
+      limit: query.limit ?? 20,
+      cursor: query.cursor ?? null,
+      sortColumn: column,
+      ascending,
+      minPrice: query.min_price,
+      maxPrice: query.max_price,
+      username: query.username,
+    });
+
+    const listingIds = page.listings.map((listing) => listing.id);
+    const bids = await this.supabase.getBidsForListingIds(listingIds);
+    const bidsByListingId = groupBidsByListingId(bids);
+
+    return {
+      listings: attachBidData(page.listings, bidsByListingId),
+      total: page.total,
+      next_cursor: page.next_cursor,
+      has_more: page.has_more,
+    };
   }
 
   async getListing(listingId: string): Promise<MarketplaceListing> {
@@ -74,13 +114,15 @@ export class MarketplaceService {
   async getListingDetail(
     listingId: string,
     viewerPublicKey?: string | null,
-  ): Promise<MarketplaceListingDetail> {
+  ): Promise<MarketplaceListingDetailDto> {
     const listing = await this.getListing(listingId);
+
     const bidPage = await this.supabase.getBidsByListingIdPaginated(
       listingId,
       50,
       null,
     );
+
     const highBidAmount = resolveHighBidAmount(
       Number(listing.asking_price),
       bidPage.bids,
@@ -89,6 +131,7 @@ export class MarketplaceService {
     return {
       listing,
       bids: bidPage.bids,
+      bid_summary: buildBidSummary(bidPage.bids),
       seller: {
         public_key: listing.seller_public_key,
         display_key: truncateStellarPublicKey(listing.seller_public_key),

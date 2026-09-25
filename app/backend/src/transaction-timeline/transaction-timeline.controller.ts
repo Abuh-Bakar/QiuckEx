@@ -15,6 +15,7 @@ import {
 import { TransactionTimelineService } from './transaction-timeline.service';
 import { GetTimelineQueryDto } from './dto/get-timeline.dto';
 import type { TimelineResponse } from './transaction-timeline.types';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 
 @ApiTags('transaction-timeline')
 @Controller('transaction-timeline')
@@ -32,6 +33,7 @@ export class TransactionTimelineController {
    * that frontend/mobile views always receive useful context.
    */
   @Get()
+  @RateLimitTier("search")
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @ApiOperation({
     summary: 'Get aggregated transaction timeline',

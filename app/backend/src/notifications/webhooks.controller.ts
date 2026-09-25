@@ -30,12 +30,14 @@ import {
   WebhookStatsDto,
   RedeliverWebhookDto,
   WebhookDeliveryStatusDto,
+  WebhookDeliveryAttemptDto,
+  WebhookDeliveryAttemptDetailDto,
   WebhookReplayLogDto,
   WebhookRedeliverResponseDto,
   VerifyWebhookSignatureDto,
   VerifyWebhookSignatureResponseDto,
 } from "./dto/webhook.dto";
-import { RateLimitGroupTag } from "../auth/decorators/rate-limit-group.decorator";
+import { RateLimitGroupTag, RateLimitTier } from "../auth/decorators/rate-limit-group.decorator";
 import { WebhookProvider } from "./providers/notification-provider.interface";
 
 @ApiTags("Webhooks")
@@ -47,6 +49,7 @@ export class WebhooksController {
   constructor(private readonly webhookService: WebhookService) {}
 
   @Post("verify-signature")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Verify a webhook payload/signature/timestamp against a secret",
@@ -72,6 +75,7 @@ export class WebhooksController {
   }
 
   @Post(":publicKey")
+  @RateLimitTier("mutation")
   @ApiOperation({ summary: "Register a new webhook for payment events" })
   @ApiParam({
     name: "publicKey",
@@ -98,6 +102,7 @@ export class WebhooksController {
   }
 
   @Get(":publicKey")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "List all webhooks for a public key" })
   @ApiParam({
     name: "publicKey",
@@ -119,6 +124,7 @@ export class WebhooksController {
   }
 
   @Get(":publicKey/:id")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "Get webhook details by ID" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
   @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
@@ -149,6 +155,7 @@ export class WebhooksController {
    * Update a webhook.
    */
   @Put(":publicKey/:id")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Update webhook configuration" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
@@ -172,6 +179,7 @@ export class WebhooksController {
   }
 
   @Delete(":publicKey/:id")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: "Delete a webhook" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
@@ -190,6 +198,7 @@ export class WebhooksController {
   }
 
   @Post(":publicKey/:id/regenerate-secret")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Regenerate webhook secret",
@@ -224,6 +233,7 @@ export class WebhooksController {
   }
 
   @Get(":publicKey/:id/logs")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "Get webhook delivery logs" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
   @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
@@ -254,6 +264,7 @@ export class WebhooksController {
   }
 
   @Get(":publicKey/:id/stats")
+  @RateLimitTier("public-read")
   @ApiOperation({ summary: "Get webhook delivery statistics" })
   @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
   @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
@@ -275,6 +286,7 @@ export class WebhooksController {
   }
 
   @Post(":publicKey/:id/redeliver")
+  @RateLimitTier("mutation")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Redeliver a specific event",
@@ -315,7 +327,80 @@ export class WebhooksController {
     return result;
   }
 
+  @Get(":publicKey/:id/attempts")
+  @RateLimitTier("public-read")
+  @ApiOperation({
+    summary: "List webhook delivery attempts for endpoint",
+    description:
+      "Paginated history of webhook delivery attempts with optional filtering by status and event type.",
+  })
+  @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
+  @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
+  @ApiQuery({ name: "status", required: false, description: "Filter by delivery status" })
+  @ApiQuery({ name: "eventType", required: false, description: "Filter by event type" })
+  @ApiQuery({ name: "limit", required: false, type: Number, description: "Items per page (1-100)" })
+  @ApiQuery({ name: "cursor", required: false, description: "Opaque pagination cursor" })
+  @ApiResponse({
+    status: 200,
+    description: "Webhook delivery attempts",
+    type: [WebhookDeliveryAttemptDto],
+  })
+  async listDeliveryAttempts(
+    @Param("publicKey") publicKey: string,
+    @Param("id") id: string,
+    @Query("status") status?: string,
+    @Query("eventType") eventType?: string,
+    @Query("limit") limit?: number,
+    @Query("cursor") cursor?: string,
+  ): Promise<{ data: WebhookDeliveryAttemptDto[]; next_cursor: string | null; has_more: boolean }> {
+    const webhook = await this.webhookService.getWebhook(id);
+    if (!webhook || webhook.publicKey !== publicKey) {
+      throw new NotFoundException("Webhook not found");
+    }
+
+    return this.webhookService.listWebhookDeliveryAttempts(publicKey, {
+      endpointId: id,
+      status,
+      eventType,
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    });
+  }
+
+  @Get(":publicKey/:id/attempts/:attemptId")
+  @RateLimitTier("public-read")
+  @ApiOperation({
+    summary: "Get a single webhook delivery attempt",
+    description: "Returns the delivery attempt detail including redacted payload metadata.",
+  })
+  @ApiParam({ name: "publicKey", description: "Stellar public key (G...)" })
+  @ApiParam({ name: "id", description: "Webhook ID (UUID)" })
+  @ApiParam({ name: "attemptId", description: "Attempt ID (UUID)" })
+  @ApiResponse({
+    status: 200,
+    description: "Webhook delivery attempt detail",
+    type: WebhookDeliveryAttemptDetailDto,
+  })
+  async getDeliveryAttempt(
+    @Param("publicKey") publicKey: string,
+    @Param("id") id: string,
+    @Param("attemptId") attemptId: string,
+  ): Promise<WebhookDeliveryAttemptDetailDto> {
+    const webhook = await this.webhookService.getWebhook(id);
+    if (!webhook || webhook.publicKey !== publicKey) {
+      throw new NotFoundException("Webhook not found");
+    }
+
+    const attempt = await this.webhookService.getWebhookDeliveryAttempt(publicKey, id, attemptId);
+    if (!attempt) {
+      throw new NotFoundException("Delivery attempt not found");
+    }
+
+    return attempt;
+  }
+
   @Get(":publicKey/:id/deliveries/:eventType/:eventId")
+  @RateLimitTier("public-read")
   @ApiOperation({
     summary: "Get webhook delivery status for an event",
     description:
@@ -346,6 +431,7 @@ export class WebhooksController {
   }
 
   @Get(":publicKey/:id/replays")
+  @RateLimitTier("public-read")
   @ApiOperation({
     summary: "List manual replay history for a webhook",
     description: "Queryable audit trail of replay API calls for this webhook.",
