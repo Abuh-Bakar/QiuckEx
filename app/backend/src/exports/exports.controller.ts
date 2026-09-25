@@ -10,6 +10,7 @@
 import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../auth/guards/api-key.guard';
+import { RateLimitTier } from '../auth/decorators/rate-limit-group.decorator';
 import { RequestExportDto } from './dto/request-export.dto';
 import { ExportStatusDto } from './dto/export-status.dto';
 import { ExportsService } from './exports.service';
@@ -54,6 +55,7 @@ export class ExportsController {
     status: 400,
     description: 'Invalid request parameters',
   })
+  @RateLimitTier('export')
   async requestExport(@Body() dto: RequestExportDto): Promise<{ jobId: string; message: string }> {
     return this.exportsService.requestExport(dto);
   }
