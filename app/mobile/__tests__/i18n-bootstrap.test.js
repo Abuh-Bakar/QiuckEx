@@ -72,7 +72,8 @@ describe('mobile i18n runtime', () => {
       return React.createElement(Text, { testID: 'dashboard-label' }, t('dashboard'));
     }
 
-    const { getByTestId } = render(React.createElement(DashboardLabel));
+    // @testing-library/react-native v14 renders asynchronously.
+    const { getByTestId } = await render(React.createElement(DashboardLabel));
 
     expect(i18n.t('dashboard')).toBe('Tableau de Bord');
     expect(getByTestId('dashboard-label').props.children).toBe('Tableau de Bord');
